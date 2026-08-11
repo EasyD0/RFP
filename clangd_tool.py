@@ -1,5 +1,6 @@
 # 利用clangd 工具定位引用
-import os, json, subprocess, threading, queue
+# TODO 需要持久化 LSP被多个子进程使用
+import os, json, subprocess, sys, threading, queue
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -223,6 +224,32 @@ def find_references(
     # （可选）关闭进程
     proc.terminate()
     return out
+
+
+def kill_all_clangd_processes():
+    """
+    终止系统中所有正在运行的 clangd 进程.
+
+    用途: multiprocessing.Pool 退出时, worker 进程可能被 terminate(),
+    其内部 find_references 启动的 clangd 子进程会变孤儿. 本函数在
+    Pool 退出后兜底清理, 避免残留进程占用资源或持有文件锁.
+
+    注意: 会杀掉系统里所有名为 clangd 的进程. 如果有 IDE 等其他程序
+    也在用 clangd, 也会被一起终止. 调用方需确保这是期望行为.
+    """
+    if sys.platform == "win32":
+        # /F 强制终止, /T 连子进程一起终止, /IM 按映像名
+        cmd = ["taskkill", "/F", "/T", "/IM", "clangd.exe"]
+    else:
+        # -9 强制 SIGKILL, -f 匹配命令行
+        cmd = ["pkill", "-9", "-f", "clangd"]
+
+    try:
+        # 没有 clangd 进程时 taskkill/pkill 返回非 0, 不算错误, 用 check=False
+        subprocess.run(cmd, capture_output=True, check=False)
+    except FileNotFoundError:
+        # 系统没有 taskkill / pkill 命令, 静默跳过
+        pass
 
 
 def get_ref_code(ref_code_locaitons: list[dict]) -> list[str]:

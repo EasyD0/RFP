@@ -1,5 +1,5 @@
 import re
-from functools import wraps, partial
+from functools import wraps
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -9,7 +9,12 @@ from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind
 
 from clang_tool import find_colum, get_cursor_in_pos
 from data_structure import Problem
-from clangd_tool import find_references, Clangd_EXE, get_ref_code
+from clangd_tool import (
+    find_references,
+    Clangd_EXE,
+    get_ref_code,
+    kill_all_clangd_processes,
+)
 
 logger = logSetUp(__name__)
 CheckerDict: dict[str, set] = {}  # 检查器字典
@@ -18,10 +23,17 @@ CheckerDict: dict[str, set] = {}  # 检查器字典
 class CodeContext:
     """
     代码处理工具
+
+    注意: 内部持有的 Preprocessor / libclang / clangd 子进程等资源
+    无法跨进程序列化, 因此通过 __getstate__/__setstate__ 只 pickle
+    构造参数 (proj_dir, proj_name, chip_name), 在 worker 进程反序列化
+    时重新构造, 让本对象可安全用于 multiprocessing.
     """
 
     def __init__(self, proj_dir: Path, proj_name: str = "", chip_name: str = ""):
         self.proj_dir = proj_dir
+        self.proj_name = proj_name
+        self.chip_name = chip_name
         self.por = Preprocessor(
             proj_dir,
             response_dir=Path("./.resp"),
@@ -29,6 +41,22 @@ class CodeContext:
             chip_name=chip_name,
         )
         self.all_used_files = self.por.getUsedFiles()
+
+    def __getstate__(self):
+        # 只序列化构造参数, 丢弃 por / all_used_files 等不可序列化资源
+        return {
+            "proj_dir": self.proj_dir,
+            "proj_name": self.proj_name,
+            "chip_name": self.chip_name,
+        }
+
+    def __setstate__(self, state):
+        # 在 worker 进程中用构造参数重新初始化, 重建 por / all_used_files
+        self.__init__(
+            proj_dir=state["proj_dir"],
+            proj_name=state["proj_name"],
+            chip_name=state["chip_name"],
+        )
 
     def get_args(self, file: Path):
         """
@@ -582,16 +610,44 @@ def total_check(
     return problems
 
 
-# %% 多线程并行计算, 需要考虑进程同步和序列化问题
+# %% 多进程并行计算, 需要考虑进程同步和序列化问题
 from multiprocessing import Pool, cpu_count
+
+# 模块级全局变量, 供 worker 进程使用 (由 initializer 写入, 避免 pickle 传 code_tool)
+_g_code_tool: CodeContext | None = None
+_g_checker_types: set[type[Checker]] = set()
+
+
+def _init_worker(code_tool: CodeContext, checker_types: set[type[Checker]]):
+    """
+    在每个 worker 进程启动时调用一次, 把 code_tool 和 checker_types
+    写入模块级全局变量, 避免被每个任务重复 pickle.
+    """
+    global _g_code_tool, _g_checker_types
+    _g_code_tool = code_tool
+    _g_checker_types = checker_types
+
+
+def _worker_check(problem: Problem) -> Problem:
+    """
+    Worker 函数: 从模块级全局变量取 code_tool 和 checker_types,
+    对单个 problem 串行应用所有检查规则.
+    """
+    global _g_code_tool, _g_checker_types
+    for _tp in _g_checker_types:
+        _tp.do(problem, _g_code_tool)
+        if problem.is_false_alarm:
+            break
+    return problem
 
 
 def total_check_parallel(
     problems: Iterable[Problem], code_tool: CodeContext, rule_code_set: set[str] | None
-):
+) -> list[Problem]:
     """
-    多进程并发检查, 以每个problem为单位放到进程里检查, 怎么处理进程间通信问题
-    序列化问题, 其中code_tool无法直接序列化, problems 应该可以序列化, rule_code_set 也可以序列化
+    多进程并发检查. 每个 problem 作为一个独立任务分发到 worker 进程.
+    通过 initializer 让每个 worker 进程只初始化一次 code_tool,
+    避免为每个任务重复 pickle 开销.
     """
     all_check_type: set[type[Checker]] = set()
     if rule_code_set:
@@ -601,18 +657,23 @@ def total_check_parallel(
         for v in CheckerDict.values():
             all_check_type.update(v)
 
-    # all_check_type 是一些类型的集合, 应该可以序列化?
+    problem_list = list(problems)
+    # chunksize 太小会导致 IPC 开销过大; 太大影响负载均衡
+    chunksize = max(1, len(problem_list) // (cpu_count() * 4))
 
+    with Pool(
+        processes=max(1, int(cpu_count() / 1.2)),
+        initializer=_init_worker,
+        initargs=(code_tool, all_check_type),
+    ) as pool:
+        results = pool.map(_worker_check, problem_list, chunksize=chunksize)
 
-    def _check(
-        problem: Problem, _code_tool: CodeContext, checker_types: set[type[Checker]]
-    ):
-        for _tp in checker_types:
-            _tp.do(problem, _code_tool)
-            if problem.is_false_alarm:
-                break
-        return problem
+    # Pool 退出后兜底清理: worker 进程被 terminate 时, 其内部 find_references
+    # 启动的 clangd 子进程可能变孤儿, 这里统一杀掉
+    kill_all_clangd_processes()
 
-    worker = partial(_check, code_tool, all_check_type)
-    with Pool(processes=int(cpu_count() / 1.2)) as pool:
-        pool.map(worker, list(problems))
+    false_alarm_num = sum(p.is_false_alarm for p in results)
+    problem_num = len(results)
+    if problem_num:
+        print(f"误报率为{false_alarm_num / problem_num:.2%}")
+    return results
