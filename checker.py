@@ -529,7 +529,7 @@ def is_unused_return_call_start(ref_code: str, func_name: str) -> bool:
 
 
 @register_checker("36S", "函数没有返回语句")
-class CHecker_36S(Checker):
+class Checker_36S(Checker):
     @tag_padding("<所有引用处都没有使用返回值>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
