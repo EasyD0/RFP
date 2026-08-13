@@ -22,9 +22,10 @@ class Preprocessor:
             proj_name:str | None = None,
             chip_name:str | None = None,
         ):
-            self.por = Preprocessor_impl()
+            self.por:Preprocessor_impl = Preprocessor_impl()
 
     def get_args(self, source_file: Path)->list[str]:
         return self.por.get_args(source_file)
 
-    
+    def getUsedFiles(self)->set[Path]:
+        return self.por.getUsedFiles()

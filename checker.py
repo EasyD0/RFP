@@ -17,7 +17,7 @@ from clangd_tool import (
 )
 
 logger = logSetUp(__name__)
-CheckerDict: dict[str, set] = {}  # 检查器字典
+CheckerDict: dict[str, set[type["Checker"]]] = {}  # 检查器字典
 
 
 class CodeContext:
@@ -181,7 +181,8 @@ class Checker_69D(Checker):
     @tag_padding("<静态变量自动零初始化>")
     @staticmethod
     def func3(problem: Problem, code_tool: CodeContext) -> Problem:
-        if "static " in problem.code_line[0].token:
+        # if "static " in problem.code_line[0].token:
+        if re.search(r"\sstatic\s", problem.code_line[0].token):
             problem.set_false()
             return problem
 
@@ -190,20 +191,27 @@ class Checker_69D(Checker):
         cursor = get_cursor_in_pos(
             problem.code_line[0], code_tool.proj_dir, clangd_args
         )
-        if not (cursor and cursor.kind == CursorKind.VAR_DECL):
+        if not (cursor and cursor.kind in {CursorKind.VAR_DECL, CursorKind.TYPE_REF}):
             logger.warning("发生意外跳过检查")
             return problem
 
-        # TODO
+        if cursor.kind == CursorKind.TYPE_REF:
+            # 此时必然不是静态的, 因为这一行开头就是类型引用
+            return problem
+
         if cursor.storage_class == StorageClass.STATIC:
             problem.set_false()
             return problem
 
+        return problem
+        # TODO 这里还要加什么步骤?
         raise NotImplementedError
 
     @tag_padding("<中途发现初始化语句>")
     @staticmethod
     def func4(problem: Problem, code_tool: CodeContext) -> Problem:
+        # TODO
+        return problem
         raise NotImplementedError
         # 其他情况 需要追踪初始化语句位置
 
@@ -529,7 +537,7 @@ def is_unused_return_call_start(ref_code: str, func_name: str) -> bool:
 
 
 @register_checker("36S", "函数没有返回语句")
-class Checker_36S(Checker):
+class CHecker_36S(Checker):
     @tag_padding("<所有引用处都没有使用返回值>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -569,6 +577,8 @@ class Checker_36S(Checker):
             return problem
         return problem
 
+for k, v in CheckerDict.items():
+    CheckerDict[k].add(Checker_isUsed)
 
 def total_check(
     problems: Iterable[Problem], code_tool: CodeContext, rule_code_set: set[str] | None
