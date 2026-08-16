@@ -5,10 +5,10 @@ from typing import Callable, Iterable
 
 from MyPyLib.LogSet import logSetUp
 from MyPyLib.Preprocessor import Preprocessor
-from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind, File
+from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind
 
 from clang_tool import get_cursor_in_pos
-from data_structure import Problem, CodePos
+from data_structure import Problem
 from clangd_tool import (
     find_references,
     Clangd_EXE,
@@ -229,119 +229,102 @@ class Checker_69D(Checker):
 
             UR anomaly, 变量未赋值就使用 : stTimeInfo.m_unMin
 
-        只检查同一个树层级的节点是否包含初始化语句? 只检查最直接的语句, 不检查间接赋值等行为, 比如通过指针赋值
+        退行实现: 只检查引用语句所在语句块中, 同一层级且起始位置不晚于引用位置的
+        语句, 是否为变量提供了直接初始化/取地址行为 (如 var = ..., &var / &var.member
+        传入函数), 不检查嵌套分支、间接赋值等行为 (比如通过指针赋值)。
+        找不到证据时保持原问题不变 (不标记误报), 不抛异常。
+
         :param problem:
         :param code_tool:
         :return:
         """
-        # TODO
-        # 假设定位到了所在函数定义的节点
-
-        # 先从报告中获取变量名称
-        var_name: str = problem.rule_name.token
-
-        clangd_args1 = code_tool.get_args(problem.file_path1(code_tool.proj_dir))
-        clangd_args2 = code_tool.get_args(problem.file_path2(code_tool.proj_dir))
-        decl_cursor: Cursor = get_cursor_in_pos(
-            problem.code_line[0], code_tool.proj_dir, clangd_args1
-        )
-        ref_cursor: Cursor = get_cursor_in_pos(
-            problem.code_line[1], code_tool.proj_dir, clangd_args1
-        )
-
-        if not ref_cursor:
+        if len(problem.code_line) < 2:
+            logger.debug("代码行不足两处, 不适用")
             return problem
 
-        def get_func_def(node: Cursor) -> Cursor:
-            # 获取node所在的函数定义节点
-            # 通过遍历子节点找到函数声明
-            cursor_line = node.extent.start.line
-            cursor_file: File = node.extent.start.file
+        # 报告中的变量名可能是成员表达式, 如 stTimeInfo.m_unMin,
+        # 需要提取根变量名 stTimeInfo, 用于匹配 &stTimeInfo.m_unMonth 这类写法
+        var_name: str = problem.rule_name.token.strip()
+        if not var_name:
+            logger.debug("无变量名, 不适用")
+            return problem
+        root_match = re.match(r"[A-Za-z_]\w*", var_name)
+        root_var = root_match.group(0) if root_match else var_name
 
-            # 获取translation unit
+        # 使用处所在文件上解析游标 (原实现解析了声明处游标却从未使用)
+        clangd_args = code_tool.get_args(problem.file_path2(code_tool.proj_dir))
+        ref_cursor: Cursor | None = get_cursor_in_pos(
+            problem.code_line[1], code_tool.proj_dir, clangd_args
+        )
+        if not ref_cursor:
+            logger.warning("无法定位使用处游标, 跳过")
+            return problem
+
+        def loc_key(loc) -> tuple[int, int]:
+            # SourceLocation 的排序键, 用于比较源码位置
+            return (loc.line, loc.column)
+
+        def contains(node: Cursor, target: Cursor) -> bool:
+            # 判断 node 的源码范围是否包含 target 的位置
+            if node.extent.start.file != target.extent.start.file:
+                return False
+            return (
+                loc_key(node.extent.start)
+                <= loc_key(target.extent.start)
+                <= loc_key(node.extent.end)
+            )
+
+        def get_func_def(node: Cursor) -> Cursor | None:
+            # 从整个翻译单元中找到包含 node 的函数定义
             tu = node.translation_unit
             if not tu:
-                return node
-
-            # 遍历AST找到包含node的函数定义
-            def find_func_def(root: Cursor) -> Cursor | None:
-                for child in root.get_children():
-                    if child.kind == CursorKind.FUNCTION_DECL:
-                        # 检查这个函数是否包含我们的node
-                        if child.location.file == cursor_file:
-                            child_start = child.extent.start.line
-                            child_end = child.extent.end.line
-                            if child_start <= cursor_line <= child_end:
-                                return child
-                        # 递归检查子节点
-                        result = find_func_def(child)
-                        if result:
-                            return result
                 return None
 
-            result = find_func_def(tu.cursor)
-            return result if result else node
+            def _find(root: Cursor) -> Cursor | None:
+                if root.kind == CursorKind.FUNCTION_DECL and contains(root, node):
+                    return root
+                for child in root.get_children():
+                    res = _find(child)
+                    if res:
+                        return res
+                return None
 
-        def get_same_level_node(cur: Cursor, root: Cursor) -> list[Cursor]:
-            # 获取node所在语法树同一层级的节点
-            if not root:
-                return []
+            return _find(tu.cursor)
 
-            cur_line = cur.extent.start.line
+        def get_innermost_block(root: Cursor, node: Cursor) -> Cursor | None:
+            # 找到包含 node 的最内层复合语句块, 即 node 所在层级的语句块
+            best: Cursor | None = None
+            best_size: tuple[int, int] | None = None
+
+            def _walk(cur: Cursor):
+                nonlocal best, best_size
+                if cur.kind == CursorKind.COMPOUND_STMT and contains(cur, node):
+                    size = (
+                        cur.extent.end.line - cur.extent.start.line,
+                        cur.extent.end.column - cur.extent.start.column,
+                    )
+                    if best is None or size < best_size:
+                        best, best_size = cur, size
+                for child in cur.get_children():
+                    _walk(child)
+
+            _walk(root)
+            return best
+
+        def get_same_level_nodes(block: Cursor, node: Cursor) -> list[Cursor]:
+            # 收集与引用语句同一层级、且起始位置不晚于引用位置的兄弟语句
+            pos = loc_key(node.extent.start)
             result = []
-
-            # 遍历root(函数定义)的子节点
-            def _travel_one_level(level_root: Cursor, result: list[Cursor]):
-                if result:
-                    return
-
-                for child in level_root.get_children():
-                    if child.location.file != cur.location.file:
-                        continue
-
+            for child in block.get_children():
+                if child.extent.start.file != node.extent.start.file:
+                    continue
+                if loc_key(child.extent.start) <= pos:
                     result.append(child)
-                    child_line = child.extent.start.line
-                    # 找到在使用变量之前的节点
-
-                    if child_line == cur_line:
-                        break
-                else:
-                    result.clear()
-
-                if result:
-                    return
-
-                for child in level_root.get_children():
-                    _travel_one_level(child, result)
-                    if result:
-                        return
-
             return result
 
-        def check_code_text(var_name: str, line_text: str) -> bool:
-            # 检查代码行是否有 var_name的赋值行为
-            if not line_text or not var_name:
-                return False
-
-            # 移除注释部分
-            comment_pos = line_text.find("//")
-            if comment_pos != -1:
-                line_text = line_text[:comment_pos]
-
-            # 检查是否有赋值操作符 =, +=, -=, *=, /= 等
-            # 以及 &var_name 这种取地址操作
-            assignment_patterns = [
-                rf"\b{re.escape(var_name)}\s*=",  # var_name = xxx
-                rf"&\s*{re.escape(var_name)}\b",  # &var_name
-            ]
-
-            for pattern in assignment_patterns:
-                if re.search(pattern, line_text):
-                    return True
-            return False
-
         def is_skip_kind(k: CursorKind) -> bool:
-            # 无需检查的CursorKind
+            # 无需检查的 CursorKind: 分支/循环/声明/跳转等结构
+            # 不提供可靠的初始化证据, 直接跳过
             skip_kinds = {
                 CursorKind.COMPOUND_STMT,  # 复合语句 {}
                 CursorKind.DECL_STMT,  # 声明语句
@@ -358,23 +341,57 @@ class Checker_69D(Checker):
                 CursorKind.GOTO_STMT,  # goto语句
                 CursorKind.LABEL_STMT,  # 标签语句
                 CursorKind.NULL_STMT,  # 空语句
-                CursorKind.CALL_EXPR,  # 函数调用
-                CursorKind.UNEXPOSED_EXPR,  # 未曝光的表达式
             }
             return k in skip_kinds
 
-        func_def: Cursor = get_func_def(ref_cursor)
-        candidate_cursor: list[Cursor] = get_same_level_node(ref_cursor, func_def)
+        def get_cursor_text(cur: Cursor) -> str:
+            # 读取游标覆盖的完整源码文本 (可能跨多行), 供文本匹配使用
+            src_file = cur.extent.start.file
+            if not src_file:
+                return ""
+            with open(
+                Path(src_file.name), "r", encoding="utf-8", errors="replace"
+            ) as f:
+                lines = f.readlines()
+            start_line = cur.extent.start.line
+            end_line = cur.extent.end.line
+            return "".join(lines[start_line - 1 : end_line])
+
+        def is_init_text(text: str) -> bool:
+            # 判断语句文本是否对变量有直接初始化/取地址行为
+            # 先移除行注释, 避免注释里的文本被误判
+            code = text.split("//", 1)[0]
+            if not code.strip():
+                return False
+
+            patterns = {
+                rf"\b{re.escape(root_var)}\s*=(?!=)",  # stTimeInfo = {0}; (排除 ==)
+                rf"&\s*{re.escape(root_var)}\b",  # &stTimeInfo / &stTimeInfo.member
+                rf"\b{re.escape(var_name)}\s*=(?!=)",  # stTimeInfo.m_unMin = 1; (排除 ==)
+                rf"&\s*{re.escape(var_name)}(?![\w.])",  # &stTimeInfo.m_unMin
+            }
+            return any(re.search(p, code) for p in patterns)
+
+        func_def = get_func_def(ref_cursor)
+        if not func_def:
+            logger.warning("未找到所在函数定义, 跳过")
+            return problem
+
+        block = get_innermost_block(func_def, ref_cursor)
+        if not block:
+            logger.warning("未找到包含使用处的语句块, 跳过")
+            return problem
+
+        candidate_cursor = get_same_level_nodes(block, ref_cursor)
         for candidate in candidate_cursor:
             if is_skip_kind(candidate.kind):
                 continue
 
-            candidate_pos = CodePos.from_cusor(candidate)
-            if check_code_text(var_name, candidate_pos.token):
+            if is_init_text(get_cursor_text(candidate)):
                 problem.set_false()
                 return problem
 
-        raise NotImplementedError
+        logger.debug("同一层级未发现对 {} 的初始化语句".format(var_name))
         return problem
 
 

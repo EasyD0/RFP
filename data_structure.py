@@ -5,7 +5,6 @@ from typing import Callable, overload
 
 from MyPyLib.LogSet import logSetUp
 from clang.cindex import Cursor
-from openpyxl import load_workbook
 from warnings import deprecated
 
 logger = logSetUp(__name__)
@@ -322,94 +321,94 @@ class Problem:
         self.is_false_alarm = checker(self)
         return self
 
+# from openpyxl import load_workbook
 
-def load_from_table(file: Path) -> list[Problem]:
-    """
-    从表格文件中读取
-
-    表头为
-    序号	文件名	函数名	代码行	规则名称	违反码	当前问题描述	真实/误报问题	历史误报原因	历史相同误报问题	规则引用	问题等级	处理方式(修改/不修改)	处理情况说明	确认人
-
-    :return:
-    """
-    # 列索引映射（从1开始）
-    col_map = {
-        "序号": 1,
-        "文件名": 2,
-        "函数名": 3,
-        "代码行": 4,
-        "规则名称": 5,
-        "违反码": 6,
-        "当前问题描述": 7,
-        "真实/误报问题": 8,
-        "历史误报原因": 9,
-        "历史相同误报问题": 10,
-        "规则引用": 11,
-        "问题等级": 12,
-        "处理方式(修改/不修改)": 13,
-        "处理情况说明": 14,
-        "确认人": 15,
-    }
-
-    wb = load_workbook(file, data_only=True)
-    ws = wb.active
-
-    # 查找表头行
-    header_row = None
-    for row_idx, row in enumerate(
-        ws.iter_rows(min_row=1, max_row=10, max_col=15), start=1
-    ):
-        cell_values = [cell.value for cell in row]
-        if "文件名" in cell_values and "函数名" in cell_values:
-            header_row = row_idx
-            break
-
-    if header_row is None:
-        logger.error(f"未找到表头行: {file}")
-        return []
-
-    problems: list[Problem] = []
-
-    # 从表头下一行开始读取数据
-    for row in ws.iter_rows(min_row=header_row + 1):
-        # 检查第一列是否有数据（序号列）
-        if not row[0].value:
-            continue
-
-        row_data = {
-            col: row[col_idx - 1].value
-            for col, col_idx in col_map.items()
-            if col_idx <= len(row)
-        }
-
-        # 跳过无效行
-        if not row_data.get("文件名"):
-            continue
-
-        # 转换 is_false_alarm
-        is_false = row_data.get("真实/误报问题", "")
-        if isinstance(is_false, str):
-            is_false_alarm = "误报" in is_false
-        else:
-            is_false_alarm = bool(is_false)
-
-        _get = lambda x: str(row_data.get(x) or "")
-        # 构建 Problem 对象
-        problem = Problem(
-            file_name=_get("文件名"),
-            func_name=_get("函数名"),
-            code_line=CodeLine(_get("代码行")),
-            rule_name=RuleName(_get("规则名称")),
-            rule_code=_get("违反码"),
-            pro_des=_get("当前问题描述"),
-            is_false_alarm=is_false_alarm,
-            history_reason=_get("历史误报原因"),
-            history_problem=_get("历史相同误报问题"),
-            rule_ref=_get("规则引用"),
-            level=_get("问题等级"),
-        )
-        problems.append(problem)
-
-    return problems
-
-
+# def load_from_table(file: Path) -> list[Problem]:
+#     """
+#     从表格文件中读取
+#
+#     表头为
+#     序号	文件名	函数名	代码行	规则名称	违反码	当前问题描述	真实/误报问题	历史误报原因	历史相同误报问题	规则引用	问题等级	处理方式(修改/不修改)	处理情况说明	确认人
+#
+#     :return:
+#     """
+#     # 列索引映射（从1开始）
+#     col_map = {
+#         "序号": 1,
+#         "文件名": 2,
+#         "函数名": 3,
+#         "代码行": 4,
+#         "规则名称": 5,
+#         "违反码": 6,
+#         "当前问题描述": 7,
+#         "真实/误报问题": 8,
+#         "历史误报原因": 9,
+#         "历史相同误报问题": 10,
+#         "规则引用": 11,
+#         "问题等级": 12,
+#         "处理方式(修改/不修改)": 13,
+#         "处理情况说明": 14,
+#         "确认人": 15,
+#     }
+#
+#     wb = load_workbook(file, data_only=True)
+#     ws = wb.active
+#
+#     # 查找表头行
+#     header_row = None
+#     for row_idx, row in enumerate(
+#         ws.iter_rows(min_row=1, max_row=10, max_col=15), start=1
+#     ):
+#         cell_values = [cell.value for cell in row]
+#         if "文件名" in cell_values and "函数名" in cell_values:
+#             header_row = row_idx
+#             break
+#
+#     if header_row is None:
+#         logger.error(f"未找到表头行: {file}")
+#         return []
+#
+#     problems: list[Problem] = []
+#
+#     # 从表头下一行开始读取数据
+#     for row in ws.iter_rows(min_row=header_row + 1):
+#         # 检查第一列是否有数据（序号列）
+#         if not row[0].value:
+#             continue
+#
+#         row_data = {
+#             col: row[col_idx - 1].value
+#             for col, col_idx in col_map.items()
+#             if col_idx <= len(row)
+#         }
+#
+#         # 跳过无效行
+#         if not row_data.get("文件名"):
+#             continue
+#
+#         # 转换 is_false_alarm
+#         is_false = row_data.get("真实/误报问题", "")
+#         if isinstance(is_false, str):
+#             is_false_alarm = "误报" in is_false
+#         else:
+#             is_false_alarm = bool(is_false)
+#
+#         _get = lambda x: str(row_data.get(x) or "")
+#         # 构建 Problem 对象
+#         problem = Problem(
+#             file_name=_get("文件名"),
+#             func_name=_get("函数名"),
+#             code_line=CodeLine(_get("代码行")),
+#             rule_name=RuleName(_get("规则名称")),
+#             rule_code=_get("违反码"),
+#             pro_des=_get("当前问题描述"),
+#             is_false_alarm=is_false_alarm,
+#             history_reason=_get("历史误报原因"),
+#             history_problem=_get("历史相同误报问题"),
+#             rule_ref=_get("规则引用"),
+#             level=_get("问题等级"),
+#         )
+#         problems.append(problem)
+#
+#     return problems
+#

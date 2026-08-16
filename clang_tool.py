@@ -16,23 +16,8 @@ from data_structure import CodePos
 logger = logSetUp(__name__)
 
 CLANG_INC = r"-ID:\Program Files\LLVM\lib\clang\18\include"
-
-
-def _get_resource_path(relative_path):
-    """获取打包后资源的真实路径"""
-    import sys
-
-    try:
-        # PyInstaller 临时文件夹路径
-        base_path = sys._MEIPASS
-    except Exception:
-        # 开发时路径
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
-
-
-libclang_path = _get_resource_path("libclang.dll")
-Config.set_library_file(libclang_path)  # 当未打包时, 该路径实际上为 "./libclang.dll"
+Config.set_library_path(r"D:\Conda_Env\codeA\Library\bin")
+# Config.set_library_file(libclang_path)  # 当未打包时, 该路径实际上为 "./libclang.dll"
 
 
 def find_colum(code_pos: CodePos, token: str = "", proj_dir=None) -> int:
