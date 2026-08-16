@@ -43,7 +43,9 @@ def find_colum(code_pos: CodePos, token: str = "", proj_dir=None) -> int:
     :param token: 目标代码文本, 若为空 则用 CodePos.code 替代
     :return:
     """
-    with open((proj_dir or Path("/")) / code_pos.path, "r") as f:
+    with open(
+        (proj_dir or Path("/")) / code_pos.path, "r", encoding="utf-8", errors="replace"
+    ) as f:
         lines = f.readlines()
     this_line_code = lines[code_pos.line - 1]
     if token or code_pos.token:
@@ -71,7 +73,7 @@ def get_cursor_at_line(
 
     try:
         index = Index.create()
-        tu = index.parse(str(file_path), args=args)
+        tu = index.parse(str(file_path), args=[*(args or []), CLANG_INC, "-x", "c"])
     except TranslationUnitLoadError as e:
         logger.error(f"解析失败：{e}")
         return None
@@ -102,7 +104,7 @@ def get_cursor_in_pos(
     source_file = code_pos.path
     line = code_pos.line
     colum = find_colum(code_pos, token, proj_dir)
-    return get_cursor_at_line(source_file, line, colum, args)
+    return get_cursor_at_line(proj_dir / source_file, line, colum, args)
 
 
 # --- 使用示例 ---

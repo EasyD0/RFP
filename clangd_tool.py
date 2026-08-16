@@ -1,12 +1,21 @@
 # 利用clangd 工具定位引用
-# TODO 需要持久化 LSP被多个子进程使用
-import os, json, subprocess, sys, threading, queue
+import json
+import queue
+import subprocess
+import sys
+import threading
 from pathlib import Path
 from urllib.parse import quote, unquote
+from MyPyLib.LogSet import logSetUp
+
+logger = logSetUp(__name__)
 
 Clangd_EXE = r"c:\msys64\mingw64\bin\clangd.exe"
 
 def path_to_file_uri(path: str | Path) -> str:
+    """
+    磁盘路径转换为链接路径
+    """
     # Windows: 绝对路径如 C:\a\b.cpp -> file:///C:/a/b.cpp
     # Linux/macOS: /a/b.cpp -> file:///a/b.cpp
     path = Path(path).absolute().as_posix()
@@ -123,13 +132,13 @@ def lsp_request(proc: subprocess.Popen, out_q, msg: dict, timeout=30):
 
 
 def find_references(
-    clangd_exe: str,
-    project_dir: str,
-    # compile_commands_json: str,
-    target_file: str,
+    project_dir: str | Path,
+    compile_commands_json: str | Path,
+    target_file: str | Path,
     line_0based: int,
     character_0based: int,
     include_declaration: bool = False,
+    clangd_exe: str = Clangd_EXE,
 ):
     """
     查找一个函数符号的所有引用
@@ -141,9 +150,9 @@ def find_references(
     :param include_declaration:
     :return:
     """
-    project_dir = os.path.abspath(project_dir)
-    target_file = os.path.abspath(target_file)
-    compile_dir = os.path.dirname(os.path.abspath(compile_commands_json))
+    project_dir = Path(project_dir).absolute().as_posix()
+    target_file = Path(target_file).absolute().as_posix()
+    compile_dir = Path(compile_commands_json).parent.absolute().as_posix()
 
     # 读目标文件全文（didOpen 需要 text）
     with open(target_file, "r", encoding="utf-8", errors="replace") as f:
@@ -153,7 +162,7 @@ def find_references(
         [
             clangd_exe,
             "--background-index",
-            # f"--compile-commands-dir={compile_dir}",
+            f"--compile-commands-dir={compile_dir}",
             # 可以加："--log=verbose"
         ],
         stdin=subprocess.PIPE,
@@ -219,7 +228,9 @@ def find_references(
         uri = loc.get("uri")
         r = loc.get("range", {})
         start = r.get("start", {})
-        out.append({"uri": uri, "start": start, "end": r.get("end", {})})
+        out.append(
+            {"uri": file_url_to_path(uri), "start": start, "end": r.get("end", {})}
+        )
 
     # （可选）关闭进程
     proc.terminate()
@@ -277,15 +288,17 @@ def get_ref_code(ref_code_locaitons: list[dict]) -> list[str]:
 
 if __name__ == "__main__":
     # 示例：把你的参数填这里
-    clangd_exe = r"D:\Program Files\LLVM\bin\clangd.exe"
+    Clangd_exe = r"D:\Program Files\LLVM\bin\clangd.exe"
     project_dir = r"D:\Code\Python\ReduceFalsePositives\test_proj"
-    compile_commands_json = r"D:\myproj\build\compile_commands.json"
+    compile_commands_json = (
+        r"D:\Code\Python\ReduceFalsePositives\test_proj\compile_commands.json"
+    )
     target_file = r"D:\Code\Python\ReduceFalsePositives\test_proj\a.c"
 
     refs = find_references(
-        clangd_exe=clangd_exe,
+        clangd_exe=Clangd_exe,
         project_dir=project_dir,
-        # compile_commands_json=compile_commands_json,
+        compile_commands_json=compile_commands_json,
         target_file=target_file,
         line_0based=1,
         character_0based=5,

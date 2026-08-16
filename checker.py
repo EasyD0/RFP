@@ -1,14 +1,14 @@
 import re
-from functools import wraps
+from functools import wraps, partial
 from pathlib import Path
 from typing import Callable, Iterable
 
 from MyPyLib.LogSet import logSetUp
 from MyPyLib.Preprocessor import Preprocessor
-from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind
+from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind, File
 
-from clang_tool import find_colum, get_cursor_in_pos
-from data_structure import Problem
+from clang_tool import get_cursor_in_pos
+from data_structure import Problem, CodePos
 from clangd_tool import (
     find_references,
     Clangd_EXE,
@@ -20,6 +20,8 @@ logger = logSetUp(__name__)
 CheckerDict: dict[str, set[type["Checker"]]] = {}  # 检查器字典
 
 
+# TODO 若问题被clear_false() 它接下来不应该继续执行检查了
+#  problem的排序函数 可能需要重新编写
 class CodeContext:
     """
     代码处理工具
@@ -66,6 +68,10 @@ class CodeContext:
         """
         return self.por.get_args(file)
 
+    def get_command_json(self, source_file):
+        raise NotImplementedError
+        return self.por.get_command_json(source_file)
+
 
 class Checker:
     """
@@ -101,7 +107,10 @@ class Checker:
             problem = f(problem, code_tool)
             if problem.is_false_alarm:
                 break
-
+        if not problem.is_false_alarm:
+            logger.debug("问题不识别为误报")
+        else:
+            logger.debug("问题识别为误报")
         return problem
 
 
@@ -210,10 +219,163 @@ class Checker_69D(Checker):
     @tag_padding("<中途发现初始化语句>")
     @staticmethod
     def func4(problem: Problem, code_tool: CodeContext) -> Problem:
+        """
+        一个违规例子形如
+            APP/PSC/src/PwrSrcDiagnose.c:1024
+            PscTimeInfo stTimeInfo;
+
+            APP/PSC/src/PwrSrcDiagnose.c:1025
+            unErr[0] = PscSigMgrGetSig(Date_Information_Month_2B6_S, &stTimeInfo.m_unMonth, NULL, NULL);//0x2B6, 2.0-2.7, 日期信息：月
+
+            UR anomaly, 变量未赋值就使用 : stTimeInfo.m_unMin
+
+        只检查同一个树层级的节点是否包含初始化语句? 只检查最直接的语句, 不检查间接赋值等行为, 比如通过指针赋值
+        :param problem:
+        :param code_tool:
+        :return:
+        """
         # TODO
-        return problem
+        # 假设定位到了所在函数定义的节点
+
+        # 先从报告中获取变量名称
+        var_name: str = problem.rule_name.token
+
+        clangd_args1 = code_tool.get_args(problem.file_path1(code_tool.proj_dir))
+        clangd_args2 = code_tool.get_args(problem.file_path2(code_tool.proj_dir))
+        decl_cursor: Cursor = get_cursor_in_pos(
+            problem.code_line[0], code_tool.proj_dir, clangd_args1
+        )
+        ref_cursor: Cursor = get_cursor_in_pos(
+            problem.code_line[1], code_tool.proj_dir, clangd_args1
+        )
+
+        if not ref_cursor:
+            return problem
+
+        def get_func_def(node: Cursor) -> Cursor:
+            # 获取node所在的函数定义节点
+            # 通过遍历子节点找到函数声明
+            cursor_line = node.extent.start.line
+            cursor_file: File = node.extent.start.file
+
+            # 获取translation unit
+            tu = node.translation_unit
+            if not tu:
+                return node
+
+            # 遍历AST找到包含node的函数定义
+            def find_func_def(root: Cursor) -> Cursor | None:
+                for child in root.get_children():
+                    if child.kind == CursorKind.FUNCTION_DECL:
+                        # 检查这个函数是否包含我们的node
+                        if child.location.file == cursor_file:
+                            child_start = child.extent.start.line
+                            child_end = child.extent.end.line
+                            if child_start <= cursor_line <= child_end:
+                                return child
+                        # 递归检查子节点
+                        result = find_func_def(child)
+                        if result:
+                            return result
+                return None
+
+            result = find_func_def(tu.cursor)
+            return result if result else node
+
+        def get_same_level_node(cur: Cursor, root: Cursor) -> list[Cursor]:
+            # 获取node所在语法树同一层级的节点
+            if not root:
+                return []
+
+            cur_line = cur.extent.start.line
+            result = []
+
+            # 遍历root(函数定义)的子节点
+            def _travel_one_level(level_root: Cursor, result: list[Cursor]):
+                if result:
+                    return
+
+                for child in level_root.get_children():
+                    if child.location.file != cur.location.file:
+                        continue
+
+                    result.append(child)
+                    child_line = child.extent.start.line
+                    # 找到在使用变量之前的节点
+
+                    if child_line == cur_line:
+                        break
+                else:
+                    result.clear()
+
+                if result:
+                    return
+
+                for child in level_root.get_children():
+                    _travel_one_level(child, result)
+                    if result:
+                        return
+
+            return result
+
+        def check_code_text(var_name: str, line_text: str) -> bool:
+            # 检查代码行是否有 var_name的赋值行为
+            if not line_text or not var_name:
+                return False
+
+            # 移除注释部分
+            comment_pos = line_text.find("//")
+            if comment_pos != -1:
+                line_text = line_text[:comment_pos]
+
+            # 检查是否有赋值操作符 =, +=, -=, *=, /= 等
+            # 以及 &var_name 这种取地址操作
+            assignment_patterns = [
+                rf"\b{re.escape(var_name)}\s*=",  # var_name = xxx
+                rf"&\s*{re.escape(var_name)}\b",  # &var_name
+            ]
+
+            for pattern in assignment_patterns:
+                if re.search(pattern, line_text):
+                    return True
+            return False
+
+        def is_skip_kind(k: CursorKind) -> bool:
+            # 无需检查的CursorKind
+            skip_kinds = {
+                CursorKind.COMPOUND_STMT,  # 复合语句 {}
+                CursorKind.DECL_STMT,  # 声明语句
+                CursorKind.RETURN_STMT,  # return语句
+                CursorKind.IF_STMT,  # if语句
+                CursorKind.FOR_STMT,  # for语句
+                CursorKind.WHILE_STMT,  # while语句
+                CursorKind.DO_STMT,  # do-while语句
+                CursorKind.SWITCH_STMT,  # switch语句
+                CursorKind.CASE_STMT,  # case语句
+                CursorKind.DEFAULT_STMT,  # default语句
+                CursorKind.BREAK_STMT,  # break语句
+                CursorKind.CONTINUE_STMT,  # continue语句
+                CursorKind.GOTO_STMT,  # goto语句
+                CursorKind.LABEL_STMT,  # 标签语句
+                CursorKind.NULL_STMT,  # 空语句
+                CursorKind.CALL_EXPR,  # 函数调用
+                CursorKind.UNEXPOSED_EXPR,  # 未曝光的表达式
+            }
+            return k in skip_kinds
+
+        func_def: Cursor = get_func_def(ref_cursor)
+        candidate_cursor: list[Cursor] = get_same_level_node(ref_cursor, func_def)
+        for candidate in candidate_cursor:
+            if is_skip_kind(candidate.kind):
+                continue
+
+            candidate_pos = CodePos.from_cusor(candidate)
+            if check_code_text(var_name, candidate_pos.token):
+                problem.set_false()
+                return problem
+
         raise NotImplementedError
-        # 其他情况 需要追踪初始化语句位置
+        return problem
 
 
 @register_checker("57S", "无作用的语句")
@@ -238,7 +400,7 @@ class Checker_57S(Checker):
 
     @tag_padding("<置为void>")
     @staticmethod
-    def func1(problem: Problem, code_tool: CodeContext) -> Problem:
+    def func2(problem: Problem, code_tool: CodeContext) -> Problem:
         first_line = problem.code_line[0]
         if re.search(r"\( *void *\)", first_line.token):
             problem.set_false()
@@ -246,7 +408,7 @@ class Checker_57S(Checker):
 
     @tag_padding("<声明语句>")
     @staticmethod
-    def func2(problem: Problem, code_tool: CodeContext) -> Problem:
+    def func3(problem: Problem, code_tool: CodeContext) -> Problem:
         args = code_tool.get_args(problem.file_path1(code_tool.proj_dir))
         cursor: Cursor | None = get_cursor_in_pos(
             problem.code_line[0], code_tool.proj_dir, args
@@ -259,7 +421,7 @@ class Checker_57S(Checker):
 
     @tag_padding("<调用函数>")
     @staticmethod
-    def func3(problem: Problem, code_tool: CodeContext) -> Problem:
+    def func4(problem: Problem, code_tool: CodeContext) -> Problem:
         args = code_tool.get_args(problem.file_path1(code_tool.proj_dir))
         cursor: Cursor | None = get_cursor_in_pos(
             problem.code_line[0], code_tool.proj_dir, args
@@ -279,7 +441,8 @@ class Checker_57S(Checker):
                 flag = True
             elif True:
                 # TODO 还会有什么情况?
-                raise NotImplementedError
+                pass
+                # raise NotImplementedError
 
         # 如果是括号表达式 CursorKind.PAREN_EXPR, 并且内部是一个函数指针
         elif cursor.kind == CursorKind.PAREN_EXPR:
@@ -287,7 +450,8 @@ class Checker_57S(Checker):
                 flag = True
         else:
             # TODO 还会有什么情况?
-            raise NotImplementedError
+            pass
+            # raise NotImplementedError
 
         problem.is_false_alarm = flag
         return problem
@@ -310,7 +474,7 @@ class Checker_1X(Checker):
     #         problem.set_false()
     #     return problem
 
-    @tag_padding("<两个声明类型和链接,存储属性均一致>")
+    @tag_padding("<两个声明的类型、链接、存储属性均一致>")
     @staticmethod
     def func2(problem: Problem, code_tool: CodeContext) -> Problem:
         clangd_args = code_tool.get_args(code_tool.proj_dir / problem.code_line[0].path)
@@ -361,7 +525,7 @@ class Checker_1X(Checker):
         return problem
 
 
-@register_checker("47", "数组越界")
+@register_checker("47S", "数组越界")
 class Checker_47S(Checker):
     @tag_padding("<数组长度检查确保不越界>")
     @staticmethod
@@ -537,7 +701,7 @@ def is_unused_return_call_start(ref_code: str, func_name: str) -> bool:
 
 
 @register_checker("36S", "函数没有返回语句")
-class CHecker_36S(Checker):
+class Checker_36S(Checker):
     @tag_padding("<所有引用处都没有使用返回值>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -548,37 +712,55 @@ class CHecker_36S(Checker):
         :param code_tool:
         :return:
         """
-        # 被引用的函数名已经解析了, TODO 这里要检查下这个规则是否有func_name
+        #TODO 这里要检查下这个规则是否有func_name
         func_name = problem.func_name
-        # 定位所有引用的代码
 
         # 定位所有引用的代码
-        ref_code_locaitons = find_references(
-            Clangd_EXE,
+        all_references: list[dict] = find_references(
             code_tool.proj_dir,
-            problem.code_line[0].path,
+            code_tool.get_command_json(problem.code_line[0].path),
+            code_tool.proj_dir / problem.code_line[0].path,
             problem.code_line[0].line - 1,
-            find_colum(problem.code_line[0], func_name, code_tool.proj_dir - 1),
+            problem.code_line[0].token.find(func_name),
         )
+        ref_codes: list[str] = []
+        for r in all_references:
+            # {"uri": file_url_to_path(uri), "start": start, "end": r.get("end", {})}
+            with open(r["uri"], "r", encoding="utf-8", errors="replace") as f:
+                ref_codes.append(" ".join(f.readlines()[r["start"] : r["end"] + 1]))
 
-        # 从定位的引用位置中提取代码
-        ref_codes = get_ref_code(ref_code_locaitons)
-
+        not_use_return_val = 0
         for ref_code in ref_codes:
-            if "=" in ref_code:
+            if "=" in ref_code and not "==" in ref_code:
                 problem.clear_false()
                 problem.pro_des += "存在一处赋值发生, 应该不是误报"
                 return problem
-            elif is_unused_return_call_start(ref_code, func_name):
-                continue
+
+            # 这行代码是否以单纯函数调用为开头？并且不是上一行的内部
+            # 比如这种情况
+            # g(
+            #    f(x)
+            #  )
+            # 这种情况就用到了返回值，但那一行的开头无法被下面这个正则匹配到
+            if re.search(rf"\( *void *\) * {func_name}\(", ref_code):
+                # 此时说明这个调用处, 返回值没有使用
+                not_use_return_val += 1
             else:
-                # 所有的引用都是直接使用函数, 这种情况是误报
-                problem.set_false()
+                problem.clear_false()
+                # TODO
+                problem.pro_des += f"发现一处使用返回值的引用, "
+                return problem
+
+        if not_use_return_val == len(ref_codes):
+            problem.set_false()
             return problem
+
         return problem
+
 
 for k, v in CheckerDict.items():
     CheckerDict[k].add(Checker_isUsed)
+
 
 def total_check(
     problems: Iterable[Problem], code_tool: CodeContext, rule_code_set: set[str] | None
