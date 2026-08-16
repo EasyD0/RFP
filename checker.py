@@ -436,9 +436,21 @@ class Checker_57S(Checker):
             problem.is_false_alarm = cursor.kind == CursorKind.VAR_DECL
         return problem
 
+    @staticmethod
+    def _is_function_pointer_type(ty) -> bool:
+        """判断类型是否为函数指针 (如 int (*)(int)), 而非数组指针等"""
+        from clang.cindex import TypeKind
+        if ty.kind == TypeKind.POINTER:
+            pointee = ty.get_pointee()
+            return pointee.kind in (TypeKind.FUNCTIONPROTO, TypeKind.FUNCTIONNOPROTO)
+        return False
+
     @tag_padding("<调用函数>")
     @staticmethod
     def func4(problem: Problem, code_tool: CodeContext) -> Problem:
+        """
+        若检测到当且cursor所在的语句是一个函数调用语句, 则判断为误报
+        """
         args = code_tool.get_args(problem.file_path1(code_tool.proj_dir))
         cursor: Cursor | None = get_cursor_in_pos(
             problem.code_line[0], code_tool.proj_dir, args
@@ -448,27 +460,22 @@ class Checker_57S(Checker):
             return problem
 
         flag = False
-        # 如果本身就是函数/函数指针的调用
+        # DECL_REF_EXPR: 直接引用函数名或函数指针变量, 如 foo 或 fp
         if cursor.kind == CursorKind.DECL_REF_EXPR:
-            if cursor.get_definition().kind == CursorKind.FUNCTION_DECL:
-                # 函数类型
+            definition = cursor.get_definition()
+            if definition is not None and definition.kind == CursorKind.FUNCTION_DECL:
                 flag = True
-            elif "(*)" in cursor.type.get_canonical().spelling:
-                # 函数指针
+            elif Checker_57S._is_function_pointer_type(cursor.type):
                 flag = True
-            elif True:
-                # TODO 还会有什么情况?
-                pass
-                # raise NotImplementedError
 
-        # 如果是括号表达式 CursorKind.PAREN_EXPR, 并且内部是一个函数指针
+        # PAREN_EXPR: 括号表达式, 如 (fp), 内部可能是函数指针
         elif cursor.kind == CursorKind.PAREN_EXPR:
-            if "(*)" in cursor.type.get_canonical().spelling:
+            if Checker_57S._is_function_pointer_type(cursor.type):
                 flag = True
-        else:
-            # TODO 还会有什么情况?
-            pass
-            # raise NotImplementedError
+
+        # CALL_EXPR: 光标落在调用表达式上, 如整个 foo()
+        elif cursor.kind == CursorKind.CALL_EXPR:
+            flag = True
 
         problem.is_false_alarm = flag
         return problem
