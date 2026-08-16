@@ -7,7 +7,7 @@ from MyPyLib.LogSet import logSetUp
 from MyPyLib.Preprocessor import Preprocessor
 from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind
 
-from clang_tool import get_cursor_in_pos
+from clang_tool import get_cursor_at_line, get_cursor_in_pos
 from data_structure import Problem
 from clangd_tool import (
     find_references,
@@ -557,9 +557,13 @@ class Checker_47S(Checker):
         """
         只做简单的单层检查, 不考虑复杂的数据流逻辑
         获取数组节点, 确定数组长度
-        获取语句节点A,
-        遍历函数树, 重定位到节点A, 在遍历的路径中记录到A的父信息, 检查父节点中是否存在下标约束,
-        然后检查该约束是否可使得数组不越界
+        获取发生越界的语句节点A,
+        然后在函数里找到语句A的父节点, 检查它的父节点里是否有可以防止越界的约束, 如果有则视为误报
+        比如说:
+            if(i<2&&i>=0){
+                arr[i];  //它的父节点里的约束是 i<2&&i>=0
+            }
+
         :param problem:
         :param code_tool:
         :return:
@@ -648,21 +652,46 @@ class Checker_47S(Checker):
 
         idx_name: str = list(all_subscript_text)[0].strip()
 
+        # 在代码行中定位 "arr[idx]" 区域, 避免 idx/arr 在行内更早的位置先出现
+        # (比如 i = arr[i] 或 foo(0, arr[1])) 导致取到错误的游标
+        access_match = re.search(
+            re.escape(arr_name) + r"\[\s*(" + re.escape(idx_name) + r")\s*\]",
+            problem.code_line[0].token,
+        )
+        if not access_match:
+            logger.warning("无法在代码行中定位数组访问")
+            return problem
+
+        src_path = code_tool.proj_dir / problem.code_line[0].path
+        # 数组名起始列 (1-based)
+        arr_col = access_match.start() + 1
+        # 下标内容起始列 (1-based)
+        idx_col = access_match.start(1) + 1
+
         # 数组下标的cursor
-        idx_cursor = get_cursor_in_pos(
-            problem.code_line[0], code_tool.proj_dir, clangd_args, idx_name
+        idx_cursor = get_cursor_at_line(
+            src_path, problem.code_line[0].line, idx_col, clangd_args
         )
 
         # 数组变量的cursor
-        arr_cursor = get_cursor_in_pos(
-            problem.code_line[0], code_tool.proj_dir, clangd_args, arr_name
+        arr_cursor = get_cursor_at_line(
+            src_path, problem.code_line[0].line, arr_col, clangd_args
         )
 
         # 语句的cursor
-        statement_cursor = get_cursor_in_pos(
-            problem.code_line[0], code_tool.proj_dir, args=clangd_args
+        statement_cursor = get_cursor_at_line(
+            src_path, problem.code_line[0].line, 1, clangd_args
         )
-        if arr_cursor.kind != CursorKind.DECL_REF_EXPR:
+
+        if not idx_cursor or not arr_cursor:
+            logger.warning("数组/下标游标获取失败")
+            return problem
+
+        if arr_cursor.kind not in {
+            CursorKind.DECL_REF_EXPR,
+            CursorKind.VAR_DECL,
+            CursorKind.PARM_DECL,
+        }:
             logger.warning("数组节点查找错误")
             return problem
 
@@ -676,29 +705,30 @@ class Checker_47S(Checker):
             if not idx_cursor.spelling:
                 logger.error("字面量的数组下标值未知")
                 return problem
-            else:
-                try:
-                    if int(idx_cursor.spelling) >= arr_size:
-                        problem.set_false()
-                        return problem
-                except Exception:
-                    logger.warning("无法处理数字下标的字面量")
-                    return problem
+            try:
+                idx_value = int(idx_cursor.spelling)
+            except Exception:
+                logger.warning("无法处理数字下标的字面量")
+                return problem
+            # 访问确实在界内 (0 <= idx < arr_size) 才算误报
+            if 0 <= idx_value < arr_size:
+                problem.set_false()
+                return problem
         elif idx_cursor.kind != CursorKind.DECL_REF_EXPR:
             # 检查数组下标是否为变量
             # 从函数定义节点开始查询到这个节点为止, 并尝试发现
             pass
-        elif idx_cursor.get_definition().kind == CursorKind.ENUM_CONSTANT_DECL:
+        elif idx_cursor.get_definition() and idx_cursor.get_definition().kind == CursorKind.ENUM_CONSTANT_DECL:
             # 是枚举引用
             idx_value = idx_cursor.get_definition().enum_value
-            if idx_value >= arr_size:
+            if 0 <= idx_value < arr_size:
                 problem.set_false()
                 return problem
         else:
             # 不是枚举引用的通常变量
-            # 需要追踪其变量
-
-            raise NotImplementedError
+            # 父节点约束检查暂未实现, 保守不判误报
+            logger.debug("变量下标暂不检查: {}".format(idx_name))
+            return problem
         return problem
 
 
