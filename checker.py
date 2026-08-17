@@ -847,10 +847,19 @@ class Checker_36S(Checker):
 
         def _is_return_value_used(file_path: str, line_0based: int, col_0based: int) -> bool:
             """
-            使用 libclang AST 判断函数调用处的返回值是否被使用.
+            使用 libclang AST 进一步验证返回值是否真的未被使用,
+            可正确处理跨行函数调用等复杂情况:
+                g(
+                 f(x)     // 看似未使用, 实际作为 g 的参数
+                )
+                g(/* comment */
+                 f(x)    // 注释行也不影响 AST 判断
+                )
 
-            在形如 "func_name()" 的引用位置获取 cursor, 此处绝对不会是函数指针的赋值
-            然后向上找到 CallExpr, 检查其父节点:
+            由于 libclang 对表达式节点不提供 parent 指针,
+            改为从引用位置向上找到闭包函数, 再向下遍历 AST,
+            通过位置比较找到最内层包含该引用的 CallExpr,
+            最后检查其父节点:
             - CompoundStmt → 独立语句, 返回值未使用
             - CStyleCastExpr(→void) → 显式丢弃, 返回值未使用
             - 其他 → 返回值被使用 (作为参数/运算/return等)
@@ -867,17 +876,55 @@ class Checker_36S(Checker):
             if not cursor:
                 return False
 
-            # 向上找到 CallExpr (函数调用表达式)
-            call_expr = cursor
-            while call_expr and call_expr.kind != CursorKind.CALL_EXPR:
-                call_expr = call_expr.semantic_parent
-
-            if not call_expr or call_expr.kind != CursorKind.CALL_EXPR:
+            # 向上找到闭包函数 (semantic_parent 对声明级节点有效)
+            in_func = cursor
+            while in_func and in_func.kind != CursorKind.FUNCTION_DECL:
+                in_func = in_func.semantic_parent
+            if not in_func or in_func.kind != CursorKind.FUNCTION_DECL:
                 return False
 
-            # 检查 CallExpr 的父节点
-            parent = call_expr.semantic_parent
-            if not parent:
+            # 1-based 位置, 用于在 AST 中定位
+            ref_line = line_0based + 1
+            ref_col = col_0based + 1
+
+            def _contains(extent, line: int, col: int) -> bool:
+                """检查 SourceRange 是否包含给定位置."""
+                s, e = extent.start, extent.end
+                if s.line > line or e.line < line:
+                    return False
+                if s.line == line and s.column > col:
+                    return False
+                if e.line == line and e.column < col:
+                    return False
+                return True
+
+            def _find_innermost_call(
+                node, parent
+            ) -> tuple:
+                """
+                递归遍历 AST, 找到包含 ref_line/ref_col 的最内层 CallExpr.
+                返回 (call_expr, parent_of_call_expr) 或 (None, None).
+                """
+                best_call = None
+                best_parent = None
+
+                for child in node.get_children():
+                    if child.kind == CursorKind.CALL_EXPR:
+                        extent = child.extent
+                        if extent and _contains(extent, ref_line, ref_col):
+                            best_call = child
+                            best_parent = parent
+
+                    inner_call, inner_parent = _find_innermost_call(child, child)
+                    if inner_call:
+                        best_call = inner_call
+                        best_parent = inner_parent
+
+                return best_call, best_parent
+
+            call_expr, parent = _find_innermost_call(in_func, None)
+
+            if not call_expr or not parent:
                 return False
 
             # 父节点是 CompoundStmt → 独立语句, 返回值未使用
@@ -924,23 +971,16 @@ class Checker_36S(Checker):
 
             # 检查这行代码是否以单纯函数调用为开头, 并且不是上一行的内部
             if is_unused_return_call_start(ref_code, func_name):
-                # 此时说明这个调用处, 返回值可能没有使用
-                # 使用 libclang AST 进一步验证返回值是否真的未被使用,
-                # 可正确处理跨行函数调用等复杂情况:
-                #   g(
-                #      f(x)     // 看似未使用, 实际作为 g 的参数
-                #   )
-                #   g(/* comment */
-                #      f(x)    // 注释行也不影响 AST 判断
-                #   )
-                col = ref_loc["start"].get("character", 0)
-                if _is_return_value_used(file_path, start_line, col):
+                # 此时说明这个调用处, 返回值可能没有使用, 继续检查
+                if _is_return_value_used(file_path, start_line, ref_loc["start"].get("character", 0)):
                     problem.clear_false()
+                    logger.debug(f"发现一处使用返回值的引用(作为另一函数参数) {ref_code}")
                     problem.pro_des += f"发现一处使用返回值的引用(作为另一函数参数)"
                     return problem
                 not_use_return_val += 1
             else:
                 problem.clear_false()
+                logger.debug(f"发现一处使用返回值的引用 {ref_code}")
                 problem.pro_des += f"发现一处使用返回值的引用"
                 return problem
 
