@@ -5,13 +5,12 @@ from typing import Callable, Iterable
 
 from MyPyLib.LogSet import logSetup
 from MyPyLib.Preprocessor import Preprocessor
-from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind
+from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind, File, Type
 
-from clang_tool import get_cursor_at_line, get_cursor_in_pos
-from data_structure import Problem
+from clang_tool import get_cursor_in_pos, get_cursor_at_line, get_cursor_in_pos
+from data_structure import Problem, CodePos
 from clangd_tool import (
     find_references,
-    Clangd_EXE,
     get_ref_code,
     kill_all_clangd_processes,
 )
@@ -423,9 +422,64 @@ class Checker_57S(Checker):
             problem.set_false()
         return problem
 
-    @tag_padding("<声明语句>")
+    @tag_padding("<识别为汇编语言>")
     @staticmethod
     def func3(problem: Problem, code_tool: CodeContext) -> Problem:
+        """
+        这种情况违规的代码行形如
+            DRV/MCU_Source/McuDrvCfg/EcuMCfg.c:679
+            st.w r7, 0 [r6]
+
+            McuDrv/Abeos/platform.c:102
+            andi 0x0020, r10, r10
+
+
+        汇编代码形如
+        #pragma inline_asm  switch_trap_0
+        static void switch_trap_0(void){
+            trap 0
+        }
+
+        但是也有可能形如
+        __asm{
+            /*汇编代码*/
+        }
+
+        实现方法1: 在那个代码行向上定位到一行中带有"{" 然后查找上面是否有
+        #pragma inline_asm 或者 __asm
+
+        实现方法2: 检查 token 中的代码文本是否为汇编语言
+        """
+        token: str = problem.code_line[0].token
+        source_file: Path = problem.file_path1(code_tool.proj_dir)
+        line_number = problem.code_line[0].line
+
+        with open(source_file, "r", encoding="utf-8", ignores="replace") as f:
+            all_lines = f.readlines()
+
+        i = line_number - 1
+        while 0 <= i < len(all_lines):
+            cur_code = all_lines[i]
+            if "{" in cur_code:
+                break
+            else:
+                i -= 1
+        if (i - 1 >= 0) and (
+            "#pragma inline_asm" in all_lines[i - 1] or "__asm" in all_lines[i - 1]
+        ):
+            logger.debug("识别为汇编语言")
+            problem.set_false()
+        else:
+            func_name = problem.func_name
+            for l in all_lines:
+                if re.search(rf"\n\s+#pragma inline_asm\s+{func_name}", l):
+                    logger.debug("识别为汇编语言")
+                    problem.set_false()
+                    return problem
+
+    @tag_padding("<声明语句>")
+    @staticmethod
+    def func4(problem: Problem, code_tool: CodeContext) -> Problem:
         args = code_tool.get_args(problem.file_path1(code_tool.proj_dir))
         cursor: Cursor | None = get_cursor_in_pos(
             problem.code_line[0], code_tool.proj_dir, args
@@ -436,21 +490,31 @@ class Checker_57S(Checker):
             problem.is_false_alarm = cursor.kind == CursorKind.VAR_DECL
         return problem
 
-    @staticmethod
-    def _is_function_pointer_type(ty) -> bool:
-        """判断类型是否为函数指针 (如 int (*)(int)), 而非数组指针等"""
-        from clang.cindex import TypeKind
-        if ty.kind == TypeKind.POINTER:
-            pointee = ty.get_pointee()
-            return pointee.kind in (TypeKind.FUNCTIONPROTO, TypeKind.FUNCTIONNOPROTO)
-        return False
-
     @tag_padding("<调用函数>")
     @staticmethod
-    def func4(problem: Problem, code_tool: CodeContext) -> Problem:
+    def func5(problem: Problem, code_tool: CodeContext) -> Problem:
         """
         若检测到当且cursor所在的语句是一个函数调用语句, 则判断为误报
         """
+
+        def _is_function_pointer_type(ty: Type) -> bool:
+            """判断类型是否为函数指针 (如 int (*)(int)), 而非数组指针等"""
+            from clang.cindex import TypeKind
+
+            if ty.kind == TypeKind.POINTER:
+                pointee = ty.get_pointee()
+                return pointee.kind in (
+                    TypeKind.FUNCTIONPROTO,
+                    TypeKind.FUNCTIONNOPROTO,
+                )
+            elif (
+                ty.get_canonical()
+                and ty.get_canonical().spelling
+                and "(*)" in ty.get_canonical().spelling
+            ):
+                return True
+            return False
+
         args = code_tool.get_args(problem.file_path1(code_tool.proj_dir))
         cursor: Cursor | None = get_cursor_in_pos(
             problem.code_line[0], code_tool.proj_dir, args
@@ -465,12 +529,12 @@ class Checker_57S(Checker):
             definition = cursor.get_definition()
             if definition is not None and definition.kind == CursorKind.FUNCTION_DECL:
                 flag = True
-            elif Checker_57S._is_function_pointer_type(cursor.type):
+            elif _is_function_pointer_type(cursor.type):
                 flag = True
 
         # PAREN_EXPR: 括号表达式, 如 (fp), 内部可能是函数指针
         elif cursor.kind == CursorKind.PAREN_EXPR:
-            if Checker_57S._is_function_pointer_type(cursor.type):
+            if _is_function_pointer_type(cursor.type):
                 flag = True
 
         # CALL_EXPR: 光标落在调用表达式上, 如整个 foo()
@@ -501,6 +565,12 @@ class Checker_1X(Checker):
     @tag_padding("<两个声明的类型、链接、存储属性均一致>")
     @staticmethod
     def func2(problem: Problem, code_tool: CodeContext) -> Problem:
+        """
+        检查两个声明的类型、链接、存储属性
+        :param problem:
+        :param code_tool:
+        :return:
+        """
         clangd_args = code_tool.get_args(code_tool.proj_dir / problem.code_line[0].path)
         cursor0 = get_cursor_in_pos(
             problem.code_line[0], code_tool.proj_dir, clangd_args
@@ -540,17 +610,32 @@ class Checker_1X(Checker):
         type0 = cursor0.type.get_canonical()
         type1 = cursor1.type.get_canonical()
         if type1.spelling != type0.spelling:
-            logger.debug("<非误报: 具有冲突的类型>")
-            problem.pro_des += "<非误报: 具有冲突的类型>"
-            problem.clear_false()
-            return problem
-
+            # 将 uint8_t 和 bool 视为同一类型
+            ts0 = type0.spelling.replace("uint8_t", "bool")
+            ts1 = type1.spelling.replace("uint8_t", "bool")
+            if ts0 != ts1:
+                logger.debug("<非误报: 具有冲突的类型>")
+                problem.pro_des += "<非误报: 具有冲突的类型>"
+                problem.clear_false()
+                return problem
+            else:
+                logger.debug("bool/uint8_t")
         problem.set_false()
         return problem
 
 
 @register_checker("47S", "数组越界")
 class Checker_47S(Checker):
+    """
+    47S规则的报告形如:
+    代码行:
+    CES/CESFilterCount/src/Filter_CounterCfg.c:233
+    gstSlow_Start_Stop_Flag[ucChannel] = 3;
+
+    规则名称:
+    数组下标越界 : gstSlow_Start_Stop_Flag[*]; accessed=4, range=0-3
+    """
+
     @tag_padding("<数组长度检查确保不越界>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -718,7 +803,10 @@ class Checker_47S(Checker):
             # 检查数组下标是否为变量
             # 从函数定义节点开始查询到这个节点为止, 并尝试发现
             pass
-        elif idx_cursor.get_definition() and idx_cursor.get_definition().kind == CursorKind.ENUM_CONSTANT_DECL:
+        elif (
+            idx_cursor.get_definition()
+            and idx_cursor.get_definition().kind == CursorKind.ENUM_CONSTANT_DECL
+        ):
             # 是枚举引用
             idx_value = idx_cursor.get_definition().enum_value
             if 0 <= idx_value < arr_size:
@@ -730,28 +818,6 @@ class Checker_47S(Checker):
             logger.debug("变量下标暂不检查: {}".format(idx_name))
             return problem
         return problem
-
-
-def is_unused_return_call_start(ref_code: str, func_name: str) -> bool:
-    """
-    判断 ref_code 是否以如下两种形式之一开头 (允许前后及单词之间存在任意空白字符):
-
-        1. (void) func_name(    —— 显式丢弃返回值的函数调用
-        2. func_name(           —— 直接的函数调用
-
-    用 ^ 锚定开头, 严格判断 "以 ... 开头", 而非出现在任意位置;
-    (?:...)? 使 (void) 部分可选, 一条正则同时覆盖两种形式;
-    func_name 经 re.escape 处理, 避免其中含有正则元字符时误匹配;
-    末尾要求 ( , 既确认是函数调用形式, 也避免匹配到同前缀的其它标识符
-    (例如 func_name_ext 不会被当作 func_name 命中)。
-
-    :param ref_code: 引用处的代码片段
-    :param func_name: 被调用的函数名
-    :return: 命中返回 True, 否则 False
-    """
-    escaped = re.escape(func_name)
-    pattern = rf"^\s*(?:\(\s*void\s*\)\s*)?{escaped}\s*\("
-    return re.match(pattern, ref_code) is not None
 
 
 @register_checker("36S", "函数没有返回语句")
@@ -766,10 +832,23 @@ class Checker_36S(Checker):
         :param code_tool:
         :return:
         """
-        #TODO 这里要检查下这个规则是否有func_name
+
+        def is_unused_return_call_start(ref_code: str, func_name: str) -> bool:
+            """
+            判断 ref_code 是否以如下两种形式之一开头 (允许前后及单词之间存在任意空白字符):
+                1. (void) func_name(    —— 显式丢弃返回值的函数调用
+                2. func_name(           —— 直接的函数调用
+            :param ref_code: 引用处的代码片段
+            :param func_name: 被调用的函数名
+            :return: 命中返回 True, 否则 False
+            """
+            escaped = re.escape(func_name)  # 避免其中含有正则元字符时误匹配
+            pattern = rf"^\s*(?:\(\s*void\s*\)\s*)?{escaped}\s*\("
+            return re.match(pattern, ref_code) is not None
+
         func_name = problem.func_name
 
-        # 定位所有引用的代码
+        # 定位所有引用该函数的代码
         all_references: list[dict] = find_references(
             code_tool.proj_dir,
             code_tool.get_command_json(problem.code_line[0].path),
@@ -777,12 +856,9 @@ class Checker_36S(Checker):
             problem.code_line[0].line - 1,
             problem.code_line[0].token.find(func_name),
         )
-        ref_codes: list[str] = []
-        for r in all_references:
-            # {"uri": file_url_to_path(uri), "start": start, "end": r.get("end", {})}
-            with open(r["uri"], "r", encoding="utf-8", errors="replace") as f:
-                ref_codes.append(" ".join(f.readlines()[r["start"] : r["end"] + 1]))
+        ref_codes: list[str] = get_ref_code(all_references)
 
+        # 检查每一处是否都未使用函数的返回值
         not_use_return_val = 0
         for ref_code in ref_codes:
             if "=" in ref_code and not "==" in ref_code:
@@ -790,19 +866,19 @@ class Checker_36S(Checker):
                 problem.pro_des += "存在一处赋值发生, 应该不是误报"
                 return problem
 
-            # 这行代码是否以单纯函数调用为开头？并且不是上一行的内部
-            # 比如这种情况
+            # 检查这行代码是否以单纯函数调用为开头, 并且不是上一行的内部
+            # 要考虑这种情况:
             # g(
             #    f(x)
             #  )
-            # 这种情况就用到了返回值，但那一行的开头无法被下面这个正则匹配到
-            if re.search(rf"\( *void *\) * {func_name}\(", ref_code):
+            # 这种情况就用到了返回值，但那一行的开头无法被下面这个正则匹配到, 需要考虑这种情况
+            if is_unused_return_call_start(ref_code, func_name):
                 # 此时说明这个调用处, 返回值没有使用
                 not_use_return_val += 1
             else:
                 problem.clear_false()
-                # TODO
-                problem.pro_des += f"发现一处使用返回值的引用, "
+                problem.pro_des += f"发现一处使用返回值的引用"
+                # TODO 这里可以给结果里加上使用返回值的引用的位置
                 return problem
 
         if not_use_return_val == len(ref_codes):
