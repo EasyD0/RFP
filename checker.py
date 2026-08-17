@@ -7,7 +7,12 @@ from MyPyLib.LogSet import logSetup
 from MyPyLib.Preprocessor import Preprocessor
 from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind, File, Type
 
-from clang_tool import get_cursor_in_pos, get_cursor_at_line
+from clang_tool import (
+    get_cursor_in_pos,
+    get_cursor_at_line,
+    get_macro_int_value,
+    parse_int_literal,
+)
 from data_structure import Problem, CodePos
 from clangd_tool import (
     find_references,
@@ -726,6 +731,8 @@ class Checker_47S(Checker):
 
             return results
 
+        # 去重后若只剩一种下标形式 (如 arr[i] + arr[i]) 可以继续检查;
+        # 出现多种下标形式 (如 arr[i] + arr[j]) 则保守退出
         all_subscript_text = extract_subscripts(arr_name, problem.code_line[0].token)
         if len(all_subscript_text) != 1:
             logger.warning("下标情况复杂, 不再检查直接退出")
@@ -785,23 +792,53 @@ class Checker_47S(Checker):
             logger.error("数组长度获取失败")
             return problem
 
-        if "literal" in str(idx_cursor.kind).lower():
-            if not idx_cursor.spelling:
-                logger.error("字面量的数组下标值未知")
-                return problem
+        # 部分 libclang 版本里 INTEGER_LITERAL.spelling 为空,
+        # 改用 token 文本 / 源码 extent 取值
+        def _literal_value_from_extent(cursor) -> int | None:
+            s, e = cursor.extent.start, cursor.extent.end
+            if s.line != e.line or e.column <= s.column:
+                return None
             try:
-                idx_value = int(idx_cursor.spelling)
+                with open(src_path, "r", encoding="utf-8", errors="ignore") as f:
+                    line_text = f.readlines()[s.line - 1]
             except Exception:
+                return None
+            # libclang 列按 UTF-8 字节计, 按字节区间切取再解码
+            line_bytes = line_text.encode("utf-8", errors="ignore")
+            return parse_int_literal(
+                line_bytes[s.column - 1 : e.column - 1].decode("utf-8", errors="ignore")
+            )
+
+        if "literal" in str(idx_cursor.kind).lower():
+            idx_value = None
+            try:
+                toks = list(idx_cursor.get_tokens())
+                if toks:
+                    idx_value = parse_int_literal(toks[0].spelling)
+            except Exception:
+                idx_value = None
+            if idx_value is None:
+                idx_value = _literal_value_from_extent(idx_cursor)
+            if idx_value is None:
                 logger.warning("无法处理数字下标的字面量")
                 return problem
             # 访问确实在界内 (0 <= idx < arr_size) 才算误报
             if 0 <= idx_value < arr_size:
                 problem.set_false()
                 return problem
-        elif idx_cursor.kind != CursorKind.DECL_REF_EXPR:
-            # 检查数组下标是否为变量
-            # 从函数定义节点开始查询到这个节点为止, 并尝试发现
-            pass
+        elif idx_cursor.kind in (
+            CursorKind.ARRAY_SUBSCRIPT_EXPR,
+            CursorKind.MACRO_INSTANTIATION,
+        ):
+            # 宏展开下标 (如 arr[N]): 尝试从宏定义解析字面值
+            idx_value = get_macro_int_value(
+                src_path, problem.code_line[0].line, idx_col, clangd_args
+            )
+            if idx_value is not None and 0 <= idx_value < arr_size:
+                problem.set_false()
+                return problem
+            # 宏值未知/替换列表复杂, 或访问越界 → 保守不判误报
+            return problem
         elif (
             idx_cursor.get_definition()
             and idx_cursor.get_definition().kind == CursorKind.ENUM_CONSTANT_DECL
