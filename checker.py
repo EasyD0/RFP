@@ -3,7 +3,7 @@ from functools import wraps, partial
 from pathlib import Path
 from typing import Callable, Iterable
 
-from MyPyLib.LogSet import logSetUp
+from MyPyLib.LogSet import logSetup
 from MyPyLib.Preprocessor import Preprocessor
 from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind
 
@@ -16,7 +16,7 @@ from clangd_tool import (
     kill_all_clangd_processes,
 )
 
-logger = logSetUp(__name__)
+logger = logSetup(__name__)
 CheckerDict: dict[str, set[type["Checker"]]] = {}  # 检查器字典
 
 

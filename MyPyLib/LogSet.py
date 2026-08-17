@@ -15,7 +15,7 @@ class BracketedFormatter(logging.Formatter):
         return super().format(record)
 
 
-def logSetUp(
+def logSetup(
     log_name: str = "",
     log_file: Path | None = None,
     *,
@@ -64,7 +64,7 @@ def logSetUp(
 
 
 def test():
-    logger = logSetUp("MyLogger", Path("./main.log"), console_level="INFO", file_level="DEBUG")
+    logger = logSetup("MyLogger", Path("./main.log"), console_level="INFO", file_level="DEBUG")
     logger.debug("这是一条调试信息 (DEBUG)")
     logger.info("这是一条普通信息 (INFO)")
     logger.warning("这是一条警告信息 (WARNING)")

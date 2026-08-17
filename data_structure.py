@@ -3,11 +3,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, overload
 
-from MyPyLib.LogSet import logSetUp
+from MyPyLib.LogSet import logSetup
 from clang.cindex import Cursor
 from warnings import deprecated
 
-logger = logSetUp(__name__)
+logger = logSetup(__name__)
 code_text = {
     "file_name": "文件名",
     "func_name": "函数名",

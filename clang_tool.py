@@ -9,11 +9,11 @@ from clang.cindex import (
     SourceLocation,
 )
 import os
-from MyPyLib.LogSet import logSetUp
+from MyPyLib.LogSet import logSetup
 
 from data_structure import CodePos
 
-logger = logSetUp(__name__)
+logger = logSetup(__name__)
 
 CLANG_INC = r"-ID:\Program Files\LLVM\lib\clang\18\include"
 Config.set_library_path(r"D:\Conda_Env\codeA\Library\bin")

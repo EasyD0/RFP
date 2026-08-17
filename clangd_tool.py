@@ -6,9 +6,9 @@ import sys
 import threading
 from pathlib import Path
 from urllib.parse import quote, unquote
-from MyPyLib.LogSet import logSetUp
+from MyPyLib.LogSet import logSetup
 
-logger = logSetUp(__name__)
+logger = logSetup(__name__)
 
 Clangd_EXE = r"c:\msys64\mingw64\bin\clangd.exe"
 
