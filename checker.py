@@ -862,6 +862,8 @@ class Checker_36S(Checker):
             最后检查其父节点:
             - CompoundStmt → 独立语句, 返回值未使用
             - CStyleCastExpr(→void) → 显式丢弃, 返回值未使用
+            - 无大括号的控制流语句体 (for/while/do/if/switch/case/default/label)
+              如 `for (;;) foo(1);` → 独立语句, 返回值未使用
             - 其他 → 返回值被使用 (作为参数/运算/return等)
 
             :param file_path: 源文件路径
@@ -922,6 +924,48 @@ class Checker_36S(Checker):
 
                 return best_call, best_parent
 
+            def _is_unbraced_body_call(parent, call_expr) -> bool:
+                """
+                判断调用是否位于"无大括号的控制流语句体"位置.
+                此时调用作为独立语句执行, 返回值同样被丢弃:
+                    for (;;) foo(1);
+                    while (c) foo(1);
+                    do foo(1); while (c);
+                    if (c) foo(1);
+                    switch (c) case 1: foo(1);
+
+                libclang 子节点布局 (空槽位会被跳过):
+                    if:      [条件, then分支, (else分支)]
+                    while:   [条件, 体]          体 = 最后一个
+                    do:      [体, 条件]          体 = 第一个
+                    for:     [init, cond, inc, 体]  体 = 最后一个
+                    switch:  [条件, 体]          体 = 最后一个
+                    case/default/label: [表达式?, 体]  体 = 最后一个
+                """
+                kids = list(parent.get_children())
+                if not kids:
+                    return False
+                start = call_expr.extent.start
+                try:
+                    idx = next(
+                        i
+                        for i, k in enumerate(kids)
+                        if k.extent
+                        and k.extent.start.line == start.line
+                        and k.extent.start.column == start.column
+                    )
+                except StopIteration:
+                    return False
+
+                if parent.kind == CursorKind.IF_STMT:
+                    # 条件在第一个子节点; then/else 分支中的调用视为未使用
+                    return idx != 0
+                if parent.kind == CursorKind.DO_STMT:
+                    # do-while 的循环体在第一个子节点
+                    return idx == 0
+                # while/for/switch/case/default/label: 语句体是最后一个子节点
+                return idx == len(kids) - 1
+
             call_expr, parent = _find_innermost_call(in_func, None)
 
             if not call_expr or not parent:
@@ -935,6 +979,19 @@ class Checker_36S(Checker):
             if parent.kind == CursorKind.CSTYLE_CAST_EXPR:
                 if "void" in parent.type.spelling:
                     return False
+
+            # 父节点是控制流语句且调用位于语句体槽位 (无大括号) → 返回值未使用
+            if parent.kind in (
+                CursorKind.IF_STMT,
+                CursorKind.WHILE_STMT,
+                CursorKind.DO_STMT,
+                CursorKind.FOR_STMT,
+                CursorKind.SWITCH_STMT,
+                CursorKind.CASE_STMT,
+                CursorKind.DEFAULT_STMT,
+                CursorKind.LABEL_STMT,
+            ) and _is_unbraced_body_call(parent, call_expr):
+                return False
 
             # 其他情况: 返回值被使用了
             return True
@@ -974,8 +1031,8 @@ class Checker_36S(Checker):
                 # 此时说明这个调用处, 返回值可能没有使用, 继续检查
                 if _is_return_value_used(file_path, start_line, ref_loc["start"].get("character", 0)):
                     problem.clear_false()
-                    logger.debug(f"发现一处使用返回值的引用(作为另一函数参数) {ref_code}")
-                    problem.pro_des += f"发现一处使用返回值的引用(作为另一函数参数)"
+                    logger.debug(f"发现一处使用返回值的引用 {ref_code}")
+                    problem.pro_des += f"发现一处使用返回值的引用"
                     return problem
                 not_use_return_val += 1
             else:
