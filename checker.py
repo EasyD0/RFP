@@ -279,14 +279,13 @@ def tag_padding(tag: str) -> Callable:
     return _decorator
 
 
-def common_method() -> Callable[[Callable], Callable]:
+def common_method(
+    func: Callable[[Problem, CodeContext], Problem],
+) -> Callable[[Problem, CodeContext], Problem]:
     """将子算法标记为通用的"""
 
-    def _decorator(func: Callable[[Problem, CodeContext], Problem]):
-        func.__is_common__ = True
-        return func
-
-    return _decorator
+    func.__is_common__ = True
+    return func
 
 
 def un_used() -> Callable[[Callable], Callable]:
@@ -320,6 +319,7 @@ class Checker_isUsed:
 
 @register_checker("69D", "变量未赋值就使用")
 class Checker_69D(Checker):
+    @common_method
     @tag_padding("<代码行没有两处>")
     @staticmethod
     def func0(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -327,6 +327,7 @@ class Checker_69D(Checker):
             problem.set_false()
         return problem
 
+    @common_method
     @tag_padding("<已在声明处显式初始化>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -334,6 +335,7 @@ class Checker_69D(Checker):
             problem.set_false()
         return problem
 
+    @common_method
     @tag_padding("<全局变量自动零初始化>")
     @staticmethod
     def func2(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -483,6 +485,7 @@ class Checker_69D(Checker):
         #   }
         #   有可能 int *b=&a 会导致以为初始化, 或者  a=1; 可能被视为同一层的
 
+    @common_method
     @tag_padding("<此处没有直接使用变量值, 而是使用其地址>")
     @staticmethod
     def func5(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -510,6 +513,7 @@ class Checker_69D(Checker):
 @register_checker("57S", "无作用的语句")
 class Checker_57S(Checker):
 
+    @common_method
     @tag_padding("<未用的参数>")
     @staticmethod
     def func0(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -518,6 +522,7 @@ class Checker_57S(Checker):
             problem.set_false()
         return problem
 
+    @common_method
     @tag_padding("<日志打印>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -527,6 +532,7 @@ class Checker_57S(Checker):
             problem.set_false()
         return problem
 
+    @common_method
     @tag_padding("<置为void>")
     @staticmethod
     def func2(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -535,6 +541,7 @@ class Checker_57S(Checker):
             problem.set_false()
         return problem
 
+    @common_method
     @tag_padding("<识别为汇编语言>")
     @staticmethod
     def func3(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -656,6 +663,7 @@ class Checker_57S(Checker):
 # 暂时OK
 @register_checker("1X", "在整个系统中声明的类型不一致")
 class Checker_1X(Checker):
+    @common_method
     @tag_padding("<代码行没有两处>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
