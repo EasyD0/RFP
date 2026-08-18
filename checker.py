@@ -34,10 +34,10 @@ class CodeContext:
     """
     代码处理工具
 
-    注意: 内部持有的 Preprocessor / libclang / clangd 子进程等资源
-    无法跨进程序列化, 因此通过 __getstate__/__setstate__ 只 pickle
-    构造参数 (proj_dir, proj_name, chip_name), 在 worker 进程反序列化
-    时重新构造, 让本对象可安全用于 multiprocessing.
+    注意: 对象整体可序列化 (Preprocessor / all_used_files 等字段均可
+    pickle). multiprocessing 时直接序列化整个实例传给 worker, worker
+    通过反序列化恢复对象, 不会重新执行 __init__, 因此不会在子进程中
+    重复初始化 Preprocessor 或重写 .resp / compile_commands.json.
     """
 
     def __init__(
@@ -65,24 +65,6 @@ class CodeContext:
     def __post_init__(self):
         self.compile_dir = self.generate_command_json(self.compile_dir)
 
-    def __getstate__(self):
-        # 只序列化构造参数, 丢弃 por / all_used_files 等不可序列化资源
-        return {
-            "proj_dir": self.proj_dir,
-            "proj_name": self.proj_name,
-            "chip_name": self.chip_name,
-            "compile_dir": self.compile_dir,
-        }
-
-    def __setstate__(self, state):
-        # 在 worker 进程中用构造参数重新初始化, 重建 por / all_used_files
-        self.__init__(
-            proj_dir=state["proj_dir"],
-            compile_dir=state["compile_dir"],
-            proj_name=state["proj_name"],
-            chip_name=state["chip_name"],
-        )
-
     def get_args(self, file: Path):
         """
         路径可以是相对/绝对路径
@@ -94,9 +76,6 @@ class CodeContext:
     def generate_command_json(self, save_dir: Path = Path("./clangd/")):
         """
         为C语言项目生成 compile_commands.json 文件, 供clangd使用, save_dir是存放 compile_commands.json文件的位置
-        TODO 如果有多个核, 可能要分开处理?  或许不用分开处理
-            多进程问题: 这个函数所有进程只能执行一次, 必须提取出来?
-            现在考虑 CodeContext 是可序列化的
         """
 
         def get_json_data(
@@ -1257,22 +1236,23 @@ def total_check(
     return problems
 
 
-# %% 多进程并行计算, 需要考虑进程同步和序列化问题
-# TODO　这里给出了一个针对code_tool不可序列化的版本,
-#  但存在问题: 每个子进程中将都会初始化Preprocess, 会写入同一个文件, 发生竞态, 并且也不希望重复写问题
-#  应该要改成可序列化的版本
+# %% 多进程并行计算
+# CodeContext 整体可序列化: worker 通过 initializer 接收父进程中已构建好的
+# 对象 (反序列化恢复, 不执行 __init__), 因此不会在子进程中重复初始化
+# Preprocessor, 也不会重写 .resp / compile_commands.json, 没有文件竞态.
 
 from multiprocessing import Pool, cpu_count
 
-# 模块级全局变量, 供 worker 进程使用 (由 initializer 写入, 避免 pickle 传 code_tool)
+# 模块级全局变量, 供 worker 进程使用 (由 initializer 写入, 避免每个任务重复 pickle)
 _g_code_tool: CodeContext | None = None
 _g_checker_types: set[type[Checker]] = set()
 
 
 def _init_worker(code_tool: CodeContext, checker_types: set[type[Checker]]):
     """
-    在每个 worker 进程启动时调用一次, 把 code_tool 和 checker_types
-    写入模块级全局变量, 避免被每个任务重复 pickle.
+    在每个 worker 进程启动时调用一次. 这里拿到的是父进程 pickle 过来的
+    CodeContext 实例: 反序列化恢复, 不会执行 __init__, 也就不会重复初始化
+    Preprocessor 或写文件. 存入模块级全局变量, 避免为每个任务重复传输.
     """
     global _g_code_tool, _g_checker_types
     _g_code_tool = code_tool
@@ -1297,7 +1277,8 @@ def total_check_parallel(
 ) -> list[Problem]:
     """
     多进程并发检查. 每个 problem 作为一个独立任务分发到 worker 进程.
-    通过 initializer 让每个 worker 进程只初始化一次 code_tool,
+    CodeContext 整体可序列化: 通过 initializer 把父进程中已构建好的实例
+    传给每个 worker (反序列化恢复, 不重建对象), 并存入模块级全局变量,
     避免为每个任务重复 pickle 开销.
     """
     all_check_type: set[type[Checker]] = set()
