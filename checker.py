@@ -93,7 +93,7 @@ class CodeContext:
 
     def generate_command_json(self, save_dir: Path = Path("./clangd/")):
         """
-        为C语言项目生成 compile_command.json 文件, 供clangd使用, save_dir是存放 compile_command.json文件的位置
+        为C语言项目生成 compile_commands.json 文件, 供clangd使用, save_dir是存放 compile_commands.json文件的位置
         TODO 如果有多个核, 可能要分开处理?  或许不用分开处理
             多进程问题: 这个函数所有进程只能执行一次, 必须提取出来?
             现在考虑 CodeContext 是可序列化的
@@ -103,12 +103,51 @@ class CodeContext:
             source_file: Path, macro_list: list[str], inc_list: list[str]
         ) -> dict:
             """
-            TODO            为一个文件条目生成在 compile_command.json中的内容
+            为一个文件条目生成在 compile_commands.json中的内容
             source_file: 相对路径
-            macro_list: 形如 ["",]
-            inc_list: 形如 ["",]
+            macro_list: 形如 ["-D macro1", "-D macro2=1"]
+            inc_list: 形如 ["-ID:/dir/",]
             """
-            raise NotImplementedError
+            # source_file 可能是相对路径(相对 proj_dir), 也可能是绝对路径, 统一转为绝对路径
+            src = source_file
+            if not src.is_absolute():
+                src = self.proj_dir / src
+            src = src.resolve()
+
+            arguments: list[str] = ["clang"]
+
+            # include 参数, 形如 "-ID:/dir/" 或 "-I D:/dir/", 每个元素作为一个整体加入
+            for inc_arg in inc_list:
+                inc_arg = str(inc_arg).strip()
+                if not inc_arg or inc_arg.startswith("#"):
+                    continue
+                if inc_arg.startswith("-I ") or inc_arg.startswith("-D "):
+                    # "-I path" / "-D macro" 拆成两个参数, clang 接受该形式
+                    flag, _, value = inc_arg.partition(" ")
+                    if value.strip():
+                        arguments.append(flag)
+                        arguments.append(value.strip())
+                else:
+                    arguments.append(inc_arg)
+
+            # 宏定义参数, 形如 "-D macro1" / "-Dmacro2=1"
+            for macro_arg in macro_list:
+                macro_arg = str(macro_arg).strip()
+                if not macro_arg:
+                    continue
+                if macro_arg.startswith("-D "):
+                    macro_name = macro_arg[3:].strip()
+                    if macro_name:
+                        arguments.append("-D")
+                        arguments.append(macro_name)
+                else:
+                    arguments.append(macro_arg)
+
+            return {
+                "directory": self.proj_dir.as_posix(),
+                "file": src.as_posix(),
+                "arguments": arguments,
+            }
 
         json_data: list[dict] = []
         resp_file_content: dict[Path, list] = {}
@@ -126,7 +165,8 @@ class CodeContext:
             inc_content = resp_file_content[inc]
             json_data.append(get_json_data(file, macro, inc_content))
 
-        json_file = save_dir / "compile_command.json"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        json_file = save_dir / "compile_commands.json"
         with open(json_file, "w", encoding="utf-8") as f:
             json.dump(json_data, f, ensure_ascii=False, indent=4)
 
