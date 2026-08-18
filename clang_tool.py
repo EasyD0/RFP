@@ -139,12 +139,14 @@ def get_cursor_at_line(
 
     try:
         index = Index.create()
-        tu = index.parse(str(file_path), args=[*(args or []), CLANG_INC, "-x", "c"])
+        tu = index.parse(
+            file_path.as_posix(), args=[*(args or []), CLANG_INC, "-x", "c"]
+        )
     except TranslationUnitLoadError as e:
         logger.error(f"解析失败：{e}")
         return None
 
-    source_file: File = tu.get_file(file_path)
+    source_file: File = tu.get_file(file_path.as_posix())
     if not source_file:
         logger.error(f"未在翻译单元中找到文件：{file_path}")
         return None
@@ -167,10 +169,98 @@ def get_cursor_at_line(
 def get_cursor_in_pos(
     code_pos: CodePos, proj_dir: Path, args: list | None = None, token: str = ""
 ) -> Cursor | None:
-    source_file = code_pos.path
+    source_file: Path = code_pos.path
     line = code_pos.line
     colum = find_colum(code_pos, token, proj_dir)
     return get_cursor_at_line(proj_dir / source_file, line, colum, args)
+
+
+def _loc_key(loc) -> tuple[int, int]:
+    # 用于比较源码位置
+    return (loc.line, loc.column)
+
+
+def cursor_contains(node: Cursor, target: Cursor) -> bool:
+    """判断 node 的源码范围是否包含 target 的位置"""
+    if node.extent.start.file != target.extent.start.file:
+        return False
+    return (
+        _loc_key(node.extent.start)
+        <= _loc_key(target.extent.start)
+        <= _loc_key(node.extent.end)
+    )
+
+
+def get_cursor_infunc(node: Cursor) -> Cursor | None:
+    """从整个翻译单元中找到包含 node 的函数定义节点"""
+    tu = node.translation_unit
+    if not tu:
+        return None
+
+    def _find(root: Cursor) -> Cursor | None:
+        if root.kind == CursorKind.FUNCTION_DECL and cursor_contains(root, node):
+            return root
+        for child in root.get_children():
+            res = _find(child)
+            if res:
+                return res
+        return None
+
+    return _find(tu.cursor)
+
+
+def get_innermost_block(func_root: Cursor, node: Cursor) -> Cursor | None:
+    """
+    找到包含 node 的最内层复合语句块, 即 node 所在块作用域
+    :param func_root:
+    :param node:
+    :return:
+    """
+    best_node: Cursor | None = None
+    best_closeness: tuple[int, int] | None = None
+
+    def _walk(cur: Cursor):
+        nonlocal best_node, best_closeness
+        if cur.kind == CursorKind.COMPOUND_STMT and cursor_contains(cur, node):
+            # 接近度指标
+            closeness = (
+                cur.extent.end.line - cur.extent.start.line,
+                cur.extent.end.column - cur.extent.start.column,
+            )
+            if best_node is None or closeness < best_closeness:
+                best_node, best_closeness = cur, closeness
+        for child in cur.get_children():
+            _walk(child)
+
+    _walk(func_root)
+    return best_node
+
+
+def get_same_level_nodes(block: Cursor, node: Cursor) -> list[Cursor]:
+    """
+    收集与引用语句同一层级、且起始位置不晚于引用位置的兄弟语句
+    TODO 这里可能有问题, 如果if for 等语句后面没有{
+    """
+    pos = _loc_key(node.extent.start)
+    result = []
+    for child in block.get_children():
+        if child.extent.start.file != node.extent.start.file:
+            continue
+        if _loc_key(child.extent.start) <= pos:
+            result.append(child)
+    return result
+
+
+def get_cursor_text(cur: Cursor) -> str:
+    # 读取游标覆盖的完整源码文本 (可能跨多行), 供文本匹配使用
+    src_file = cur.extent.start.file
+    if not src_file:
+        return ""
+    with open(Path(str(src_file)), "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    start_line = cur.extent.start.line
+    end_line = cur.extent.end.line
+    return "".join(lines[start_line - 1 : end_line])
 
 
 # --- 使用示例 ---

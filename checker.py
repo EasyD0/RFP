@@ -1,19 +1,24 @@
+import json
 import re
-from functools import wraps, partial
+from functools import wraps
 from pathlib import Path
 from typing import Callable, Iterable
 
 from MyPyLib.LogSet import logSetup
 from MyPyLib.Preprocessor import Preprocessor
-from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind, File, Type
+from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind, Type
 
 from clang_tool import (
     get_cursor_in_pos,
     get_cursor_at_line,
     get_macro_int_value,
     parse_int_literal,
+    get_cursor_infunc,
+    get_innermost_block,
+    get_same_level_nodes,
+    get_cursor_text,
 )
-from data_structure import Problem, CodePos
+from data_structure import Problem
 from clangd_tool import (
     find_references,
     kill_all_clangd_processes,
@@ -35,17 +40,30 @@ class CodeContext:
     时重新构造, 让本对象可安全用于 multiprocessing.
     """
 
-    def __init__(self, proj_dir: Path, proj_name: str = "", chip_name: str = ""):
-        self.proj_dir = proj_dir
+    def __init__(
+        self,
+        proj_dir: Path,
+        compile_dir: Path = Path("./clangd/"),
+        proj_name: str = "",
+        chip_name: str = "",
+    ):
+        self.proj_dir = proj_dir.resolve()
+        self.compile_dir = compile_dir.resolve()
         self.proj_name = proj_name
         self.chip_name = chip_name
-        self.por = Preprocessor(
-            proj_dir,
+
+        self.por: Preprocessor = Preprocessor(
+            self.proj_dir,
             response_dir=Path("./.resp"),
             proj_name=proj_name,
             chip_name=chip_name,
         )
+        # 绝对路径集合
         self.all_used_files = self.por.getUsedFiles()
+        self.__post_init__()
+
+    def __post_init__(self):
+        self.compile_dir = self.generate_command_json(self.compile_dir)
 
     def __getstate__(self):
         # 只序列化构造参数, 丢弃 por / all_used_files 等不可序列化资源
@@ -53,12 +71,14 @@ class CodeContext:
             "proj_dir": self.proj_dir,
             "proj_name": self.proj_name,
             "chip_name": self.chip_name,
+            "compile_dir": self.compile_dir,
         }
 
     def __setstate__(self, state):
         # 在 worker 进程中用构造参数重新初始化, 重建 por / all_used_files
         self.__init__(
             proj_dir=state["proj_dir"],
+            compile_dir=state["compile_dir"],
             proj_name=state["proj_name"],
             chip_name=state["chip_name"],
         )
@@ -71,9 +91,58 @@ class CodeContext:
         """
         return self.por.get_args(file)
 
-    def get_command_json(self, source_file):
-        raise NotImplementedError
-        return self.por.get_command_json(source_file)
+    def generate_command_json(self, save_dir: Path = Path("./clangd/")):
+        """
+        为C语言项目生成 compile_command.json 文件, 供clangd使用, save_dir是存放 compile_command.json文件的位置
+        TODO 如果有多个核, 可能要分开处理?  或许不用分开处理
+            多进程问题: 这个函数所有进程只能执行一次, 必须提取出来?
+            现在考虑 CodeContext 是可序列化的
+        """
+
+        def get_json_data(
+            source_file: Path, macro_list: list[str], inc_list: list[str]
+        ) -> dict:
+            """
+            TODO            为一个文件条目生成在 compile_command.json中的内容
+            source_file: 相对路径
+            macro_list: 形如 ["",]
+            inc_list: 形如 ["",]
+            """
+            raise NotImplementedError
+
+        json_data: list[dict] = []
+        resp_file_content: dict[Path, list] = {}
+        for file in self.all_used_files:
+            _, macro, inc = self.por.core_macro_inc(file)
+            if not inc in resp_file_content:
+                with open(
+                    inc,
+                    "r",
+                    encoding="utf-8",
+                ) as f:
+                    _content = f.readlines()
+                resp_file_content[inc] = _content
+
+            inc_content = resp_file_content[inc]
+            json_data.append(get_json_data(file, macro, inc_content))
+
+        json_file = save_dir / "compile_command.json"
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(json_data, f, ensure_ascii=False, indent=4)
+
+        return json_file
+
+    def is_used_file(self, file: Path):
+        """文件路径可以是绝对路径/相对工程根的路径"""
+        if not file.is_absolute():
+            abs_path = self.proj_dir.absolute() / file
+        else:
+            abs_path = file
+
+        if not abs_path.exists():
+            return False
+
+        return abs_path in self.all_used_files or file in self.all_used_files
 
 
 class Checker:
@@ -82,7 +151,10 @@ class Checker:
     """
 
     rule_code: str = ""  # 将由装饰器注入
-    ProcessList: list[Callable[[Problem, CodeContext], Problem]] = []
+    # 所有方法
+    _ProcessListAll: list[Callable[[Problem, CodeContext], Problem]] = []
+    # 通用的方法
+    _ProcessListCommon: list[Callable[[Problem, CodeContext], Problem]] = []
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -98,7 +170,15 @@ class Checker:
                 )
 
     @classmethod
-    def do(cls, problem: Problem, code_tool: CodeContext) -> Problem:
+    def do(
+        cls, problem: Problem, code_tool: CodeContext, only_common_check=False
+    ) -> Problem:
+        """
+        :param problem:
+        :param code_tool:
+        :param only_common_check: 只做通用检查
+        :return:
+        """
         if problem.rule_code.replace(" ", "") != cls.rule_code:
             logger.debug("问题不属于规则{}, 直接跳过".format(cls.rule_code))
             return problem
@@ -106,7 +186,12 @@ class Checker:
             logger.debug("没有代码行内容, 直接跳过")
             return problem
 
-        for f in cls.ProcessList:
+        if only_common_check:
+            member_funcs = cls._ProcessListCommon
+        else:
+            member_funcs = cls._ProcessListAll
+
+        for f in member_funcs:
             problem = f(problem, code_tool)
             if problem.is_false_alarm:
                 break
@@ -131,18 +216,34 @@ def register_checker(
 
         # 处理类型的ProcessList
         process_list = []
+        common_process_list = []
         for attr_name in dir(class_type):
-            attr = getattr(class_type, attr_name)
-            if callable(attr) and hasattr(attr, "__is_process__"):
-                process_list.append(attr)
-        class_type.ProcessList = sorted(process_list, key=lambda f: f.__name__)
+            class_attr = getattr(class_type, attr_name)
+            if callable(class_attr):
+                if hasattr(class_attr, "__un_used__"):
+                    # 暂不使用的方法
+                    continue
+                if hasattr(class_attr, "__is_process__"):
+                    process_list.append(class_attr)
+                if hasattr(class_attr, "__is_common__"):
+                    common_process_list.append(class_attr)
 
+        class_type._ProcessListAll = sorted(process_list, key=lambda f: f.__name__)
+        class_type._ProcessListCommon = sorted(
+            common_process_list, key=lambda f: f.__name__
+        )
         return class_type
 
     return _decorator
 
 
 def tag_padding(tag: str) -> Callable:
+
+    if not tag.endswith(">"):
+        tag += ">"
+    if not tag.startswith("<"):
+        tag = "<" + tag
+
     def _decorator(func: Callable[[Problem, CodeContext], Problem]):
         @wraps(func)
         def new_func(*args, **kwargs):
@@ -153,7 +254,28 @@ def tag_padding(tag: str) -> Callable:
             return res
 
         new_func.__is_process__ = True
+        new_func.tag = tag  # 用于后面根据配置文件来开启和关闭子算法
         return new_func
+
+    return _decorator
+
+
+def common_method() -> Callable[[Callable], Callable]:
+    """将子算法标记为通用的"""
+
+    def _decorator(func: Callable[[Problem, CodeContext], Problem]):
+        func.__is_common__ = True
+        return func
+
+    return _decorator
+
+
+def un_used() -> Callable[[Callable], Callable]:
+    """将子算法标记为不使用的"""
+
+    def _decorator(func: Callable[[Problem, CodeContext], Problem]):
+        func.__un_used__ = True
+        return func
 
     return _decorator
 
@@ -161,7 +283,10 @@ def tag_padding(tag: str) -> Callable:
 class Checker_isUsed:
     @tag_padding("<未参与编译文件>")
     @staticmethod
-    def do(problem: Problem, code_tool: CodeContext) -> Problem:
+    def do(problem: Problem, code_tool: CodeContext, only_common_check=True) -> Problem:
+        if only_common_check:
+            return problem
+
         if not problem.file_name:
             logger.debug("无文件名, 不适用")
             return problem
@@ -176,6 +301,13 @@ class Checker_isUsed:
 
 @register_checker("69D", "变量未赋值就使用")
 class Checker_69D(Checker):
+    @tag_padding("<代码行没有两处>")
+    @staticmethod
+    def func0(problem: Problem, code_tool: CodeContext) -> Problem:
+        if len(problem.code_line) != 2:
+            problem.set_false()
+        return problem
+
     @tag_padding("<已在声明处显式初始化>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
@@ -228,7 +360,7 @@ class Checker_69D(Checker):
             PscTimeInfo stTimeInfo;
 
             APP/PSC/src/PwrSrcDiagnose.c:1025
-            unErr[0] = PscSigMgrGetSig(Date_Information_Month_2B6_S, &stTimeInfo.m_unMonth, NULL, NULL);//0x2B6, 2.0-2.7, 日期信息：月
+            unErr[0] = PscSigMgrGetSig(Date_Information_Month_2B6_S, &stTimeInfo.m_unMonth, NULL, NULL);
 
             UR anomaly, 变量未赋值就使用 : stTimeInfo.m_unMin
 
@@ -254,7 +386,7 @@ class Checker_69D(Checker):
         root_match = re.match(r"[A-Za-z_]\w*", var_name)
         root_var = root_match.group(0) if root_match else var_name
 
-        # 使用处所在文件上解析游标 (原实现解析了声明处游标却从未使用)
+        # 使用处所在文件上解析游标
         clangd_args = code_tool.get_args(problem.file_path2(code_tool.proj_dir))
         ref_cursor: Cursor | None = get_cursor_in_pos(
             problem.code_line[1], code_tool.proj_dir, clangd_args
@@ -262,68 +394,6 @@ class Checker_69D(Checker):
         if not ref_cursor:
             logger.warning("无法定位使用处游标, 跳过")
             return problem
-
-        def loc_key(loc) -> tuple[int, int]:
-            # SourceLocation 的排序键, 用于比较源码位置
-            return (loc.line, loc.column)
-
-        def contains(node: Cursor, target: Cursor) -> bool:
-            # 判断 node 的源码范围是否包含 target 的位置
-            if node.extent.start.file != target.extent.start.file:
-                return False
-            return (
-                loc_key(node.extent.start)
-                <= loc_key(target.extent.start)
-                <= loc_key(node.extent.end)
-            )
-
-        def get_func_def(node: Cursor) -> Cursor | None:
-            # 从整个翻译单元中找到包含 node 的函数定义
-            tu = node.translation_unit
-            if not tu:
-                return None
-
-            def _find(root: Cursor) -> Cursor | None:
-                if root.kind == CursorKind.FUNCTION_DECL and contains(root, node):
-                    return root
-                for child in root.get_children():
-                    res = _find(child)
-                    if res:
-                        return res
-                return None
-
-            return _find(tu.cursor)
-
-        def get_innermost_block(root: Cursor, node: Cursor) -> Cursor | None:
-            # 找到包含 node 的最内层复合语句块, 即 node 所在层级的语句块
-            best: Cursor | None = None
-            best_size: tuple[int, int] | None = None
-
-            def _walk(cur: Cursor):
-                nonlocal best, best_size
-                if cur.kind == CursorKind.COMPOUND_STMT and contains(cur, node):
-                    size = (
-                        cur.extent.end.line - cur.extent.start.line,
-                        cur.extent.end.column - cur.extent.start.column,
-                    )
-                    if best is None or size < best_size:
-                        best, best_size = cur, size
-                for child in cur.get_children():
-                    _walk(child)
-
-            _walk(root)
-            return best
-
-        def get_same_level_nodes(block: Cursor, node: Cursor) -> list[Cursor]:
-            # 收集与引用语句同一层级、且起始位置不晚于引用位置的兄弟语句
-            pos = loc_key(node.extent.start)
-            result = []
-            for child in block.get_children():
-                if child.extent.start.file != node.extent.start.file:
-                    continue
-                if loc_key(child.extent.start) <= pos:
-                    result.append(child)
-            return result
 
         def is_skip_kind(k: CursorKind) -> bool:
             # 无需检查的 CursorKind: 分支/循环/声明/跳转等结构
@@ -347,19 +417,6 @@ class Checker_69D(Checker):
             }
             return k in skip_kinds
 
-        def get_cursor_text(cur: Cursor) -> str:
-            # 读取游标覆盖的完整源码文本 (可能跨多行), 供文本匹配使用
-            src_file = cur.extent.start.file
-            if not src_file:
-                return ""
-            with open(
-                Path(src_file.name), "r", encoding="utf-8", errors="replace"
-            ) as f:
-                lines = f.readlines()
-            start_line = cur.extent.start.line
-            end_line = cur.extent.end.line
-            return "".join(lines[start_line - 1 : end_line])
-
         def is_init_text(text: str) -> bool:
             # 判断语句文本是否对变量有直接初始化/取地址行为
             # 先移除行注释, 避免注释里的文本被误判
@@ -368,14 +425,14 @@ class Checker_69D(Checker):
                 return False
 
             patterns = {
-                rf"\b{re.escape(root_var)}\s*=(?!=)",  # stTimeInfo = {0}; (排除 ==)
+                rf"\b{re.escape(root_var)}\s*=(?!=)",  # 匹配 stTimeInfo = {0}; 排除 == 的情况
                 rf"&\s*{re.escape(root_var)}\b",  # &stTimeInfo / &stTimeInfo.member
-                rf"\b{re.escape(var_name)}\s*=(?!=)",  # stTimeInfo.m_unMin = 1; (排除 ==)
+                rf"\b{re.escape(var_name)}\s*=(?!=)",  # stTimeInfo.m_unMin = 1; 排除 == 的情况
                 rf"&\s*{re.escape(var_name)}(?![\w.])",  # &stTimeInfo.m_unMin
             }
             return any(re.search(p, code) for p in patterns)
 
-        func_def = get_func_def(ref_cursor)
+        func_def = get_cursor_infunc(ref_cursor)
         if not func_def:
             logger.warning("未找到所在函数定义, 跳过")
             return problem
@@ -395,6 +452,39 @@ class Checker_69D(Checker):
                 return problem
 
         logger.debug("同一层级未发现对 {} 的初始化语句".format(var_name))
+        return problem
+
+        # TODO 需要测试下这种情况
+        #   {
+        #       int x;
+        #       int a;
+        #       int *b=&a;
+        #       if (x>0) a=1;
+        #       x=a; //最后的a是否违规?
+        #   }
+        #   有可能 int *b=&a 会导致以为初始化, 或者  a=1; 可能被视为同一层的
+
+    @tag_padding("<此处没有直接使用变量值, 而是使用其地址>")
+    @staticmethod
+    def func5(problem: Problem, code_tool: CodeContext) -> Problem:
+        """
+        一个违规例子形如
+            APP/PSC/src/PwrSrcDiagnose.c:1024
+            PscTimeInfo stTimeInfo;
+
+            APP/PSC/src/PwrSrcDiagnose.c:1025
+            unErr[0] = PscSigMgrGetSig(Date_Information_Month_2B6_S, &stTimeInfo.m_unMonth, NULL, NULL);
+        在1025使用处实际上正是要对stTimeInfo.m_unMonth进行赋值, 这种情况需要视为误报
+        :param problem:
+        :param code_tool:
+        :return:
+        """
+        var_name = problem.rule_name.token.strip()
+        use_token = problem.code_line[1].token.strip()
+        if re.search(rf"&\s+{var_name}", use_token):
+            # 发现对它的引用
+            problem.set_false()
+
         return problem
 
 
@@ -455,11 +545,15 @@ class Checker_57S(Checker):
         实现方法2: 检查 token 中的代码文本是否为汇编语言
         """
         token: str = problem.code_line[0].token
-        source_file: Path = problem.file_path1(code_tool.proj_dir)
         line_number = problem.code_line[0].line
-
-        with open(source_file, "r", encoding="utf-8", ignores="replace") as f:
+        source_file: Path = problem.file_path1(code_tool.proj_dir)
+        func_name = problem.func_name
+        with open(source_file, "r", encoding="utf-8", errors="replace") as f:
+            file_text = f.read()
             all_lines = f.readlines()
+        if func_name and re.search(rf"\n#pragma\s+inline_asm\s+{func_name}", file_text):
+            problem.set_false()
+            return problem
 
         i = line_number - 1
         while 0 <= i < len(all_lines):
@@ -468,18 +562,11 @@ class Checker_57S(Checker):
                 break
             else:
                 i -= 1
-        if (i - 1 >= 0) and (
-            "#pragma inline_asm" in all_lines[i - 1] or "__asm" in all_lines[i - 1]
-        ):
-            logger.debug("识别为汇编语言")
+
+        if (i - 1 >= 0) and ("__asm" in all_lines[i - 1]):
             problem.set_false()
-        else:
-            func_name = problem.func_name
-            for l in all_lines:
-                if re.search(rf"\n\s+#pragma inline_asm\s+{func_name}", l):
-                    logger.debug("识别为汇编语言")
-                    problem.set_false()
-                    return problem
+
+        return problem
 
     @tag_padding("<声明语句>")
     @staticmethod
@@ -528,21 +615,19 @@ class Checker_57S(Checker):
             return problem
 
         flag = False
-        # DECL_REF_EXPR: 直接引用函数名或函数指针变量, 如 foo 或 fp
         if cursor.kind == CursorKind.DECL_REF_EXPR:
+            # DECL_REF_EXPR: 直接引用函数名或函数指针变量, 如 foo 或 fp
             definition = cursor.get_definition()
             if definition is not None and definition.kind == CursorKind.FUNCTION_DECL:
                 flag = True
             elif _is_function_pointer_type(cursor.type):
                 flag = True
-
-        # PAREN_EXPR: 括号表达式, 如 (fp), 内部可能是函数指针
         elif cursor.kind == CursorKind.PAREN_EXPR:
+            # PAREN_EXPR: 括号表达式, 如 (fp), 内部可能是函数指针
             if _is_function_pointer_type(cursor.type):
                 flag = True
-
-        # CALL_EXPR: 光标落在调用表达式上, 如整个 foo()
         elif cursor.kind == CursorKind.CALL_EXPR:
+            # CALL_EXPR: 光标落在调用表达式上, 如整个 foo()
             flag = True
 
         problem.is_false_alarm = flag
@@ -640,7 +725,7 @@ class Checker_47S(Checker):
     数组下标越界 : gstSlow_Start_Stop_Flag[*]; accessed=4, range=0-3
     """
 
-    @tag_padding("<数组长度检查确保不越界>")
+    @tag_padding("<发现充分的下标约束>")
     @staticmethod
     def func1(problem: Problem, code_tool: CodeContext) -> Problem:
         """
@@ -778,6 +863,7 @@ class Checker_47S(Checker):
             logger.warning("数组/下标游标获取失败")
             return problem
 
+
         if arr_cursor.kind not in {
             CursorKind.DECL_REF_EXPR,
             CursorKind.VAR_DECL,
@@ -882,7 +968,9 @@ class Checker_36S(Checker):
             pattern = rf"^\s*(?:\(\s*void\s*\)\s*)?{escaped}\s*\("
             return re.match(pattern, ref_code) is not None
 
-        def _is_return_value_used(file_path: str, line_0based: int, col_0based: int) -> bool:
+        def _is_return_value_used(
+            file_path: str, line_0based: int, col_0based: int
+        ) -> bool:
             """
             使用 libclang AST 进一步验证返回值是否真的未被使用,
             可正确处理跨行函数调用等复杂情况:
@@ -937,9 +1025,7 @@ class Checker_36S(Checker):
                     return False
                 return True
 
-            def _find_innermost_call(
-                node, parent
-            ) -> tuple:
+            def _find_innermost_call(node, parent) -> tuple:
                 """
                 递归遍历 AST, 找到包含 ref_line/ref_col 的最内层 CallExpr.
                 返回 (call_expr, parent_of_call_expr) 或 (None, None).
@@ -1038,7 +1124,7 @@ class Checker_36S(Checker):
         # 定位所有引用该函数的代码
         all_references: list[dict] = find_references(
             code_tool.proj_dir,
-            code_tool.get_command_json(problem.code_line[0].path),
+            code_tool.compile_dir,
             code_tool.proj_dir / problem.code_line[0].path,
             problem.code_line[0].line - 1,
             problem.code_line[0].token.find(func_name),
@@ -1066,7 +1152,9 @@ class Checker_36S(Checker):
             # 检查这行代码是否以单纯函数调用为开头, 并且不是上一行的内部
             if is_unused_return_call_start(ref_code, func_name):
                 # 此时说明这个调用处, 返回值可能没有使用, 继续检查
-                if _is_return_value_used(file_path, start_line, ref_loc["start"].get("character", 0)):
+                if _is_return_value_used(
+                    file_path, start_line, ref_loc["start"].get("character", 0)
+                ):
                     problem.clear_false()
                     logger.debug(f"发现一处使用返回值的引用 {ref_code}")
                     problem.pro_des += f"发现一处使用返回值的引用"
@@ -1130,6 +1218,10 @@ def total_check(
 
 
 # %% 多进程并行计算, 需要考虑进程同步和序列化问题
+# TODO　这里给出了一个针对code_tool不可序列化的版本,
+#  但存在问题: 每个子进程中将都会初始化Preprocess, 会写入同一个文件, 发生竞态, 并且也不希望重复写问题
+#  应该要改成可序列化的版本
+
 from multiprocessing import Pool, cpu_count
 
 # 模块级全局变量, 供 worker 进程使用 (由 initializer 写入, 避免 pickle 传 code_tool)
