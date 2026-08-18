@@ -390,6 +390,15 @@ class Checker_69D(Checker):
         传入函数), 不检查嵌套分支、间接赋值等行为 (比如通过指针赋值)。
         找不到证据时保持原问题不变 (不标记误报), 不抛异常。
 
+        # 需要测试下这种情况 通过测试了
+        #   {
+        #       int x;
+        #       int a;
+        #       int *b=&a;
+        #       if (x>0) a=1;
+        #       x=a; //最后的a是否违规?
+        #   }
+        #   有可能 int *b=&a 会导致以为初始化, 或者  a=1; 可能被视为同一层的
         :param problem:
         :param code_tool:
         :return:
@@ -475,15 +484,7 @@ class Checker_69D(Checker):
         logger.debug("同一层级未发现对 {} 的初始化语句".format(var_name))
         return problem
 
-        # TODO 需要测试下这种情况
-        #   {
-        #       int x;
-        #       int a;
-        #       int *b=&a;
-        #       if (x>0) a=1;
-        #       x=a; //最后的a是否违规?
-        #   }
-        #   有可能 int *b=&a 会导致以为初始化, 或者  a=1; 可能被视为同一层的
+
 
     @common_method
     @tag_padding("<此处没有直接使用变量值, 而是使用其地址>")
