@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from typing import Callable
 
 from clang.cindex import (
     Index,
@@ -196,67 +197,27 @@ def _loc_key(loc) -> tuple[int, int]:
     return (loc.line, loc.column)
 
 
-def cursor_contains(node: Cursor, target: Cursor) -> bool:
-    """判断 node 的源码范围是否包含 target 的位置"""
-    if str(node.extent.start.file) != str(target.extent.start.file):
-        return False
-    return (
-        _loc_key(node.extent.start)
-        <= _loc_key(target.extent.start)
-        <= _loc_key(node.extent.end)
-    )
-
-
 def get_cursor_in_func(node: Cursor) -> Cursor | None:
-    """从整个翻译单元中找到包含 node 的函数定义节点"""
-    tu = node.translation_unit
-    if not tu:
-        return None
-
-    def _find(root: Cursor) -> Cursor | None:
-        if root.kind == CursorKind.FUNCTION_DECL and cursor_contains(root, node):
-            return root
-        for child in root.get_children():
-            res = _find(child)
-            if res:
-                return res
-        return None
-
-    return _find(tu.cursor)
+    """找到包含 node 的函数定义节点 (最近的 FUNCTION_DECL 祖先)"""
+    return get_first_ancestor(node, kinds={CursorKind.FUNCTION_DECL})
 
 
-def get_innermost_block(func_root: Cursor, node: Cursor) -> Cursor | None:
+def get_innermost_block(node: Cursor) -> Cursor | None:
     """
-    找到包含 node 的最内层复合语句块, 即 node 所在块作用域
-    :param func_root:
-    :param node:
-    :return:
+    找到包含 node 的最内层复合语句块, 即 node 所在块作用域。
+    基于父节点映射表向上查找, 等价于旧版"全树遍历 + 源码范围比较"。
     """
-    best_node: Cursor | None = None
-    best_closeness: tuple[int, int] | None = None
-
-    def _walk(cur: Cursor):
-        nonlocal best_node, best_closeness
-        if cur.kind == CursorKind.COMPOUND_STMT and cursor_contains(cur, node):
-            # 接近度指标
-            closeness = (
-                cur.extent.end.line - cur.extent.start.line,
-                cur.extent.end.column - cur.extent.start.column,
-            )
-            if best_node is None or closeness < best_closeness:
-                best_node, best_closeness = cur, closeness
-        for child in cur.get_children():
-            _walk(child)
-
-    _walk(func_root)
-    return best_node
+    return get_first_ancestor(node, kinds={CursorKind.COMPOUND_STMT})
 
 
-def get_same_level_nodes(block: Cursor, node: Cursor) -> list[Cursor]:
+def get_same_level_nodes(node: Cursor) -> list[Cursor]:
     """
-    收集与引用语句同一层级、且起始位置不晚于引用位置的兄弟语句
+    收集与 node 同一层级、且起始位置不晚于 node 位置的兄弟语句。
     TODO 这里可能有问题, 如果if for 等语句后面没有{
     """
+    block = get_innermost_block(node)
+    if block is None:
+        return []
     pos = _loc_key(node.extent.start)
     result = []
     for child in block.get_children():
@@ -318,6 +279,79 @@ def _get_ancestors(cursor: Cursor, parent_map: dict) -> list[Cursor]:
     return ancestors
 
 
+def _parent_map_for(node: Cursor) -> dict:
+    """返回 node 所在翻译单元的父节点映射表; 无法获取时返回空表"""
+    tu = node.translation_unit
+    if not tu:
+        return {}
+    return _build_parent_map(tu.cursor)
+
+
+def get_ancestors(node: Cursor, parent_map: dict | None = None) -> list[Cursor]:
+    """
+    返回 node 的所有祖先节点, 从近到远 (不含 node 自身)。
+
+    :param node: 目标节点的游标
+    :param parent_map: 可复用的父节点映射表 (由 _build_parent_map 构建),
+                      不传则基于 node 所在翻译单元内部构建
+    :return: 祖先节点列表 (从近到远)
+    """
+    if parent_map is None:
+        parent_map = _parent_map_for(node)
+    return _get_ancestors(node, parent_map)
+
+
+def get_parent(node: Cursor, parent_map: dict | None = None) -> Cursor | None:
+    """
+    返回 node 的直接(词法)父节点。
+
+    libclang 对表达式节点不提供 parent 指针, 这里通过父节点映射表查询。
+    :param node: 目标节点的游标
+    :param parent_map: 可复用的父节点映射表, 不传则内部构建
+    :return: 直接父节点; 无法确定时返回 None
+    """
+    if parent_map is None:
+        parent_map = _parent_map_for(node)
+    return parent_map.get(node.hash)
+
+
+def get_first_ancestor(
+    node: Cursor,
+    kinds: set[CursorKind] | None = None,
+    predicate: Callable[[Cursor], bool] | None = None,
+    include_self: bool = False,
+    parent_map: dict | None = None,
+) -> Cursor | None:
+    """
+    从 node 自身 (include_self=True 时) 或最近祖先开始, 向上找到第一个满足条件的节点。
+
+    :param node: 起始游标
+    :param kinds: 要匹配的 CursorKind 集合; 与 predicate 同时提供时, 任一命中即可
+    :param predicate: 自定义匹配函数, 接收 Cursor 返回 bool
+    :param include_self: 是否把 node 自身也纳入匹配 (默认只查祖先)
+    :param parent_map: 可复用的父节点映射表, 不传则内部构建
+    :return: 第一个命中的节点; 找不到返回 None
+    """
+    if kinds is None and predicate is None:
+        raise ValueError("kinds 和 predicate 至少需要提供一个")
+    if parent_map is None:
+        parent_map = _parent_map_for(node)
+
+    def _match(cur: Cursor) -> bool:
+        if kinds is not None and cur.kind in kinds:
+            return True
+        if predicate is not None and predicate(cur):
+            return True
+        return False
+
+    if include_self and _match(node):
+        return node
+    for ancestor in _get_ancestors(node, parent_map):
+        if _match(ancestor):
+            return ancestor
+    return None
+
+
 def get_parent_node(node: Cursor) -> Cursor | None:
     """
     返回包含 node 所在语句的、最近的具有约束性质的语句节点
@@ -338,31 +372,11 @@ def get_parent_node(node: Cursor) -> Cursor | None:
     :param node: 目标节点的游标
     :return: 最近的约束语句节点, 如果没有则返回 None
     """
-    # 传入的节点本身就是约束语句时直接返回, 避免 Cursor.from_location
-    # 解析到整个语句 (如落在关键字上) 时反而返回 None
-    if node.kind in _CONSTRAINT_STATEMENT_KINDS:
-        return node
-
-    # 向上找到根节点 (translation unit)
-    root = node
-    while root and root.kind != CursorKind.TRANSLATION_UNIT:
-        root = root.semantic_parent
-
-    if root is None or root.kind != CursorKind.TRANSLATION_UNIT:
-        return None
-
-    # 构建 parent_map
-    parent_map = _build_parent_map(root)
-
-    # 获取所有祖先节点
-    ancestors = _get_ancestors(node, parent_map)
-
-    # 找到第一个约束语句类型的祖先
-    for ancestor in ancestors:
-        if ancestor.kind in _CONSTRAINT_STATEMENT_KINDS:
-            return ancestor
-
-    return None
+    return get_first_ancestor(
+        node,
+        kinds=_CONSTRAINT_STATEMENT_KINDS,
+        include_self=True,
+    )
 
 def get_cursor_text(cur: Cursor) -> str:
     # 读取游标覆盖的完整源码文本 (可能跨多行), 供文本匹配使用

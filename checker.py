@@ -15,6 +15,9 @@ from clang_tool import (
     get_cursor_in_func,
     get_innermost_block,
     get_same_level_nodes,
+    get_first_ancestor,
+    get_parent,
+    get_parent_node,
     get_cursor_text,
     literal_value_from_cursor,
 )
@@ -461,12 +464,12 @@ class Checker_69D(Checker):
             logger.warning("未找到所在函数定义, 跳过")
             return problem
 
-        block = get_innermost_block(func_def, ref_cursor)
+        block = get_innermost_block(ref_cursor)
         if not block:
             logger.warning("未找到包含使用处的语句块, 跳过")
             return problem
 
-        candidate_cursor = get_same_level_nodes(block, ref_cursor)
+        candidate_cursor = get_same_level_nodes(ref_cursor)
         for candidate in candidate_cursor:
             if is_skip_kind(candidate.kind):
                 continue
@@ -994,9 +997,8 @@ class Checker_36S(Checker):
                 )
 
             由于 libclang 对表达式节点不提供 parent 指针,
-            改为从引用位置向上找到闭包函数, 再向下遍历 AST,
-            通过位置比较找到最内层包含该引用的 CallExpr,
-            最后检查其父节点:
+            复用 clang_tool 的父节点映射表 (get_first_ancestor / get_parent)
+            找到引用位置所属的最内层 CallExpr 及其直接父节点, 然后检查:
             - CompoundStmt → 独立语句, 返回值未使用
             - CStyleCastExpr(→void) → 显式丢弃, 返回值未使用
             - 无大括号的控制流语句体 (for/while/do/if/switch/case/default/label)
@@ -1015,49 +1017,10 @@ class Checker_36S(Checker):
             if not cursor:
                 return False
 
-            # 向上找到闭包函数 (semantic_parent 对声明级节点有效)
-            in_func = cursor
-            while in_func and in_func.kind != CursorKind.FUNCTION_DECL:
-                in_func = in_func.semantic_parent
-            if not in_func or in_func.kind != CursorKind.FUNCTION_DECL:
+            # 找到包含引用位置的闭包函数
+            in_func = get_cursor_in_func(cursor)
+            if not in_func:
                 return False
-
-            # 1-based 位置, 用于在 AST 中定位
-            ref_line = line_0based + 1
-            ref_col = col_0based + 1
-
-            def _contains(extent, line: int, col: int) -> bool:
-                """检查 SourceRange 是否包含给定位置."""
-                s, e = extent.start, extent.end
-                if s.line > line or e.line < line:
-                    return False
-                if s.line == line and s.column > col:
-                    return False
-                if e.line == line and e.column < col:
-                    return False
-                return True
-
-            def _find_innermost_call(node, parent) -> tuple:
-                """
-                递归遍历 AST, 找到包含 ref_line/ref_col 的最内层 CallExpr.
-                返回 (call_expr, parent_of_call_expr) 或 (None, None).
-                """
-                best_call = None
-                best_parent = None
-
-                for child in node.get_children():
-                    if child.kind == CursorKind.CALL_EXPR:
-                        extent = child.extent
-                        if extent and _contains(extent, ref_line, ref_col):
-                            best_call = child
-                            best_parent = parent
-
-                    inner_call, inner_parent = _find_innermost_call(child, child)
-                    if inner_call:
-                        best_call = inner_call
-                        best_parent = inner_parent
-
-                return best_call, best_parent
 
             def _is_unbraced_body_call(parent, call_expr) -> bool:
                 """
@@ -1101,7 +1064,12 @@ class Checker_36S(Checker):
                 # while/for/switch/case/default/label: 语句体是最后一个子节点
                 return idx == len(kids) - 1
 
-            call_expr, parent = _find_innermost_call(in_func, None)
+            # 通过父节点映射表定位引用位置所在的最内层 CallExpr 及其直接父节点,
+            # 替代原先"从函数根向下全树遍历 + 位置比较"的手写实现
+            call_expr = get_first_ancestor(
+                cursor, kinds={CursorKind.CALL_EXPR}, include_self=True
+            )
+            parent = get_parent(call_expr) if call_expr else None
 
             if not call_expr or not parent:
                 return False
