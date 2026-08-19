@@ -11,6 +11,8 @@ from clang.cindex import Cursor, CursorKind, StorageClass, LinkageKind, Type
 from clang_tool import (
     get_cursor_in_pos,
     get_cursor_at_line,
+    parse_tu,
+    cursor_at,
     get_macro_int_value,
     get_cursor_in_func,
     get_innermost_block,
@@ -799,108 +801,100 @@ class Checker_47S(Checker):
 
         logger.debug(f"数组名称为 {arr_name}")
 
-        # 文本检查是否存在多种数组下标的访问, 比如这行文本种出现了 arr[i]+arr[i+1],  如果是则直接退出
-        def extract_subscripts(var_name, expression) -> set[str]:
-            """
-            从表达式中提取指定变量名的所有下标内容。
-            对于这种情况会多找 arr[i+1] + arr[f(x, y)] + a.arr[g]
-            """
-            results = set()
-            n = len(expression)
-            v_len = len(var_name)
-            i = 0
-
-            while i < n:
-                # 1. 检查当前位置是否匹配变量名
-                if expression[i : i + v_len] == var_name:
-                    # 2. 检查变量名前的边界 (确保不是更长标识符的一部分，如 barr)
-                    # 如果 i>0 且前一个字符是字母、数字或下划线，则不是独立变量
-                    if i > 0 and (
-                        expression[i - 1].isalnum() or expression[i - 1] == "_"
-                    ):
-                        i += 1
-                        continue
-
-                    # 3. 检查变量名后是否紧跟 '['
-                    next_char_idx = i + v_len
-                    if next_char_idx < n and expression[next_char_idx] == "[":
-                        # 4. 开始寻找匹配的右括号 ']'
-                        start_bracket = next_char_idx
-                        balance = 1  # 已经遇到一个 '['
-                        j = start_bracket + 1
-
-                        while j < n and balance > 0:
-                            if expression[j] == "[":
-                                balance += 1
-                            elif expression[j] == "]":
-                                balance -= 1
-                            j += 1
-
-                        # 如果找到了匹配的右括号 (balance 归零)
-                        if balance == 0:
-                            # 提取括号内的内容
-                            content = expression[start_bracket + 1 : j - 1]
-                            results.add(content)
-
-                        # 跳过已处理的部分
-                        i = j
-                        continue
-
-                i += 1
-
-            return results
-
-        # 去重后若只剩一种下标形式 (如 arr[i] + arr[i]) 可以继续检查;
-        # 出现多种下标形式 (如 arr[i] + arr[j]) 则保守退出
-
-
-        all_subscript_text: set[str] = extract_subscripts(
-            arr_name, problem.code_line[0].token
-        )
-        if len(all_subscript_text) != 1:
-            logger.warning("下标情况复杂, 不再检查直接退出")
-            return problem
-        elif re.search(r"\W", list(all_subscript_text)[0].strip()):
-            logger.warning("下标情况复杂, 不再检查直接退出")
-            return problem
-
-        idx_name: str = list(all_subscript_text)[0].strip()
-        # TODO 需要检查idx_name是否是一个复杂的表达式?, 如果是复杂的表达式 比如 idx+1 structure.idx 这种也直接退出不判断
-        #  具体实现可以游标解析整个 [idx+1], 看这个下标表达式中有几个子节点, 或者直接从字符串模式匹配
-
         source_file_abs = problem.file_path1(code_tool.proj_dir)
         with open(source_file_abs, "r", errors="replace") as f:
             raw_code_line_text = f.readlines()[problem.code_line[0].line - 1]
 
-        access_match = re.search(
-            re.escape(arr_name) + r"\[\s*(" + re.escape(idx_name) + r")\s*\]",
-            raw_code_line_text,
-        )
-        if not access_match:
+        src_path = code_tool.proj_dir / problem.code_line[0].path
+        line_num = problem.code_line[0].line
+        clangd_args = code_tool.get_args(problem.code_line[0].path)
+
+        # 只解析一次翻译单元, 同一行的数组/下标游标都从它获取
+        tu = parse_tu(src_path, clangd_args)
+        if tu is None:
+            logger.warning("解析失败")
+            return problem
+
+        def _is_ident_char(ch) -> bool:
+            return ch is not None and (ch.isalnum() or ch == "_")
+
+        def _unwrap_expr(cur: Cursor) -> Cursor:
+            # 去掉 libclang 的 UNEXPOSED_EXPR 包装层, 拿到实际表达式节点
+            while cur is not None and cur.kind == CursorKind.UNEXPOSED_EXPR:
+                kids = list(cur.get_children())
+                if len(kids) != 1:
+                    break
+                cur = kids[0]
+            return cur
+
+        def _find_array_accesses() -> list[tuple[Cursor, Cursor]]:
+            """
+            通过 AST 找出该行中所有形如 arr_name[...] 的访问。
+            返回 [(数组游标, 下标表达式游标)], 下标已去掉 UNEXPOSED_EXPR 包装。
+            """
+            accesses = []
+            search_from = 0
+            while True:
+                pos = raw_code_line_text.find(arr_name, search_from)
+                if pos < 0:
+                    break
+                search_from = pos + 1
+                # 边界检查: 不能是更长标识符的一部分 (如 barr)
+                if _is_ident_char(raw_code_line_text[pos - 1] if pos > 0 else None):
+                    continue
+                after = pos + len(arr_name)
+                if _is_ident_char(
+                    raw_code_line_text[after]
+                    if after < len(raw_code_line_text)
+                    else None
+                ):
+                    continue
+
+                arr_cursor = cursor_at(tu, src_path, line_num, pos + 1)
+                if arr_cursor is None:
+                    continue
+                subscript = get_first_ancestor(
+                    arr_cursor, kinds={CursorKind.ARRAY_SUBSCRIPT_EXPR}
+                )
+                if subscript is None:
+                    continue
+                kids = list(subscript.get_children())
+                if not kids:
+                    continue
+                # ARRAY_SUBSCRIPT_EXPR 子节点布局: [数组基址, 下标表达式]
+                accesses.append((arr_cursor, _unwrap_expr(kids[-1])))
+            return accesses
+
+        accesses = _find_array_accesses()
+        if not accesses:
             logger.warning("无法在代码行中定位数组访问")
             return problem
 
-        src_path = code_tool.proj_dir / problem.code_line[0].path
-        # 数组名起始列 (1-based)
-        arr_col = access_match.start() + 1
-        # 下标内容起始列 (1-based)
-        idx_col = access_match.start(1) + 1
-
-        clangd_args = code_tool.get_args(problem.code_line[0].path)
-
-        # 数组下标的cursor
-        idx_cursor = get_cursor_at_line(
-            src_path, problem.code_line[0].line, idx_col, clangd_args
-        )
-
-        # 数组变量的cursor
-        arr_cursor = get_cursor_at_line(
-            src_path, problem.code_line[0].line, arr_col, clangd_args
-        )
-
-        if not idx_cursor or not arr_cursor:
-            logger.warning("数组/下标游标获取失败")
+        # 下标必须是简单表达式 (单个变量/字面量/宏), 复杂表达式 (如 i+1) 保守退出
+        _SIMPLE_INDEX_KINDS = {
+            CursorKind.INTEGER_LITERAL,
+            CursorKind.DECL_REF_EXPR,
+            CursorKind.MACRO_INSTANTIATION,
+        }
+        if any(idx.kind not in _SIMPLE_INDEX_KINDS for _, idx in accesses):
+            logger.warning("下标情况复杂, 不再检查直接退出")
             return problem
+
+        # 同一行出现多种不同下标 (如 arr[i] + arr[j]) 时保守退出
+        index_texts: set[str | None] = set()
+        for _, idx in accesses:
+            s, e = idx.extent.start, idx.extent.end
+            if s.line != line_num or e.line != line_num:
+                index_texts.add(None)  # 跨行下标按复杂处理
+            else:
+                index_texts.add(
+                    raw_code_line_text[s.column - 1 : e.column - 1].strip()
+                )
+        if len(index_texts) != 1 or None in index_texts:
+            logger.warning("下标情况复杂, 不再检查直接退出")
+            return problem
+
+        arr_cursor, idx_cursor = accesses[0]
 
         if arr_cursor.kind not in {
             CursorKind.DECL_REF_EXPR,
@@ -921,19 +915,22 @@ class Checker_47S(Checker):
         if "literal" in str(idx_cursor.kind).lower():
             idx_value = literal_value_from_cursor(idx_cursor)
             if idx_value is None:
+                # 宏展开出的字面量 (如 #define N 3 后写 arr[N]) 的 extent 落在宏名上,
+                # 源码文本不是数字, 退回宏定义解析
+                idx_value = get_macro_int_value(
+                    src_path, line_num, idx_cursor.extent.start.column, clangd_args
+                )
+            if idx_value is None:
                 logger.warning("无法处理数字下标的字面量值")
                 return problem
             # 访问确实在界内 (0 <= idx < arr_size) 才算误报
             if 0 <= idx_value < arr_size:
                 problem.set_false()
                 return problem
-        elif idx_cursor.kind in (
-            CursorKind.ARRAY_SUBSCRIPT_EXPR,  # TODO 这里似乎不用?
-            CursorKind.MACRO_INSTANTIATION,
-        ):
+        elif idx_cursor.kind == CursorKind.MACRO_INSTANTIATION:
             # 宏展开下标 (如 arr[N]): 尝试从宏定义解析字面值
             idx_value = get_macro_int_value(
-                src_path, problem.code_line[0].line, idx_col, clangd_args
+                src_path, line_num, idx_cursor.extent.start.column, clangd_args
             )
             if idx_value is not None and 0 <= idx_value < arr_size:
                 problem.set_false()
