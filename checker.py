@@ -576,14 +576,15 @@ class Checker_57S(Checker):
 
         实现方法2: 检查 token 中的代码文本是否为汇编语言
         """
-        token: str = problem.code_line[0].token
         line_number = problem.code_line[0].line
         source_file: Path = problem.file_path1(code_tool.proj_dir)
         func_name = problem.func_name
         with open(source_file, "r", encoding="utf-8", errors="replace") as f:
-            file_text = f.read()
             all_lines = f.readlines()
-        if func_name and re.search(rf"\n#pragma\s+inline_asm\s+{func_name}", file_text):
+        file_text = "".join(all_lines)
+        if func_name and re.search(
+            rf"(?:^|\n)#pragma\s+inline_asm\s+{func_name}", file_text
+        ):
             problem.set_false()
             return problem
 
