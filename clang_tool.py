@@ -191,7 +191,7 @@ def cursor_contains(node: Cursor, target: Cursor) -> bool:
     )
 
 
-def get_cursor_infunc(node: Cursor) -> Cursor | None:
+def get_cursor_in_func(node: Cursor) -> Cursor | None:
     """从整个翻译单元中找到包含 node 的函数定义节点"""
     tu = node.translation_unit
     if not tu:

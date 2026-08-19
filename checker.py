@@ -12,8 +12,7 @@ from clang_tool import (
     get_cursor_in_pos,
     get_cursor_at_line,
     get_macro_int_value,
-    parse_int_literal,
-    get_cursor_infunc,
+    get_cursor_in_func,
     get_innermost_block,
     get_same_level_nodes,
     get_cursor_text,
@@ -43,9 +42,9 @@ class CodeContext:
     def __init__(
         self,
         proj_dir: Path,
-        compile_dir: Path = Path("./clangd/"),
         proj_name: str = "",
         chip_name: str = "",
+        compile_dir: Path = Path("./clangd/"),
     ):
         self.proj_dir = proj_dir.resolve()
         self.compile_dir = compile_dir.resolve()
@@ -390,15 +389,6 @@ class Checker_69D(Checker):
         传入函数), 不检查嵌套分支、间接赋值等行为 (比如通过指针赋值)。
         找不到证据时保持原问题不变 (不标记误报), 不抛异常。
 
-        # 需要测试下这种情况 通过测试了
-        #   {
-        #       int x;
-        #       int a;
-        #       int *b=&a;
-        #       if (x>0) a=1;
-        #       x=a; //最后的a是否违规?
-        #   }
-        #   有可能 int *b=&a 会导致以为初始化, 或者  a=1; 可能被视为同一层的
         :param problem:
         :param code_tool:
         :return:
@@ -419,7 +409,10 @@ class Checker_69D(Checker):
         # 使用处所在文件上解析游标
         clangd_args = code_tool.get_args(problem.file_path2(code_tool.proj_dir))
         ref_cursor: Cursor | None = get_cursor_in_pos(
-            problem.code_line[1], code_tool.proj_dir, clangd_args
+            problem.code_line[1],
+            code_tool.proj_dir,
+            clangd_args,
+            problem.rule_name.token,
         )
         if not ref_cursor:
             logger.warning("无法定位使用处游标, 跳过")
@@ -462,7 +455,7 @@ class Checker_69D(Checker):
             }
             return any(re.search(p, code) for p in patterns)
 
-        func_def = get_cursor_infunc(ref_cursor)
+        func_def = get_cursor_in_func(ref_cursor)
         if not func_def:
             logger.warning("未找到所在函数定义, 跳过")
             return problem
@@ -484,7 +477,15 @@ class Checker_69D(Checker):
         logger.debug("同一层级未发现对 {} 的初始化语句".format(var_name))
         return problem
 
-
+        # TODO 需要测试下这种情况
+        #   {
+        #       int x;
+        #       int a;
+        #       int *b=&a;
+        #       if (x>0) a=1;
+        #       x=a; //最后的a是否违规?
+        #   }
+        #   有可能 int *b=&a 会导致以为初始化, 或者  a=1; 可能被视为同一层的
 
     @common_method
     @tag_padding("<此处没有直接使用变量值, 而是使用其地址>")
