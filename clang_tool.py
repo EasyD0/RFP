@@ -378,6 +378,16 @@ def get_parent_node(node: Cursor) -> Cursor | None:
         include_self=True,
     )
 
+
+def get_restraint(expr_node: Cursor, idx_cur: Cursor) -> set[str] | None:
+    """
+    获取一个表达式中的约束, 比如 for(i = 1; i < 10; ++i) 的i<10
+    :param node:
+    :return:
+    """
+    pass
+
+
 def get_cursor_text(cur: Cursor) -> str:
     # 读取游标覆盖的完整源码文本 (可能跨多行), 供文本匹配使用
     src_file = cur.extent.start.file
@@ -417,3 +427,4 @@ if __name__ == "__main__":
         print("未在指定位置找到有效的 Cursor (可能是空白行或解析错误)。")
 
     print(1)
+

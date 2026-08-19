@@ -951,8 +951,14 @@ class Checker_47S(Checker):
         elif idx_cursor.kind == CursorKind.DECL_REF_EXPR:
             # 下标是变量的情况, 需要检查上层中的约束, 比如
             # for (i = 0; i < 10; ++i) {f(x); arr[i];}
-            # 对于arr[i] 需要定位到父节点 for (i = 0; i < 10; ++i) 然后检查约束是否充分
-            pass
+            # 先定位到父节点 for (i = 0; i < 10; ++i), 再检查约束是否充分
+            parent_node = get_parent_node(idx_cursor)
+            if not parent_node:
+                # 找不到约束节点, 无法证明访问在界内, 保守不判误报
+                logger.debug("未找到下标变量的约束语句, 保守退出")
+                return problem
+            # TODO: 后续用 get_restraint(parent_node, idx_cursor) 分析约束是否充分
+            return problem
 
         return problem
 
