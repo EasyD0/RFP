@@ -957,7 +957,7 @@ class Checker_47S(Checker):
                 # 找不到约束节点, 无法证明访问在界内, 保守不判误报
                 logger.debug("未找到下标变量的约束语句, 保守退出")
                 return problem
-            # TODO: 后续用 get_restraint(parent_node, idx_cursor) 分析约束是否充分
+            # TODO: 后续用 get_constraint(parent_node, idx_cursor) 分析约束是否充分
             return problem
 
         return problem
