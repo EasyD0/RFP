@@ -267,6 +267,103 @@ def get_same_level_nodes(block: Cursor, node: Cursor) -> list[Cursor]:
     return result
 
 
+# 控制流语句类型 - 这些是"完整语句"
+_CONSTRAINT_STATEMENT_KINDS = {
+    CursorKind.FOR_STMT,
+    CursorKind.WHILE_STMT,
+    CursorKind.DO_STMT,
+    CursorKind.IF_STMT,
+    CursorKind.SWITCH_STMT,
+    CursorKind.CASE_STMT,
+    CursorKind.DEFAULT_STMT,
+    CursorKind.LABEL_STMT,
+}
+
+
+def _build_parent_map(root_cursor: Cursor) -> dict:
+    """
+    从根节点开始遍历, 记录每个子节点的父节点。用 cursor.hash 做 key。
+
+    :param root_cursor: AST 根节点
+    :return: dict, key 为 cursor.hash, value 为父节点
+    """
+    parent_map = {}
+
+    def visit(cur: Cursor, parent: Cursor | None):
+        if parent is not None:
+            parent_map[cur.hash] = parent
+        for child in cur.get_children():
+            visit(child, cur)
+
+    visit(root_cursor, None)
+    return parent_map
+
+
+def _get_ancestors(cursor: Cursor, parent_map: dict) -> list[Cursor]:
+    """
+    从近到远返回 cursor 的所有祖先节点。
+
+    :param cursor: 起始节点
+    :param parent_map: 父节点映射表
+    :return: 祖先节点列表 (从近到远)
+    """
+    ancestors = []
+    cur = cursor
+    while True:
+        p = parent_map.get(cur.hash)
+        if p is None:
+            break
+        ancestors.append(p)
+        cur = p
+    return ancestors
+
+
+def get_parent_node(node: Cursor) -> Cursor | None:
+    """
+    返回包含 node 所在语句的、最近的具有约束性质的语句节点
+    (for / while / do / if / switch 等), 供后续约束分析使用
+    (例如提取 for 的循环边界 i < 10)。
+
+    比如
+        for(i = 1; i < 10; ++i) {arr[i];}
+
+    传入 arr 的游标 (arr 位于语句 arr[i]; 中), 返回 for 的游标。
+
+    特殊情形:
+    - 若 node 本身就是约束语句 (例如 Cursor.from_location 落在关键字/空白处时
+      返回的是整个语句), 则直接返回 node 自身;
+    - 若 node 位于 for / if 等语句头部的括号内 (如条件中的 i), 该 for / if
+      本身就是包含它的完整语句, 同样返回该 for / if。
+
+    :param node: 目标节点的游标
+    :return: 最近的约束语句节点, 如果没有则返回 None
+    """
+    # 传入的节点本身就是约束语句时直接返回, 避免 Cursor.from_location
+    # 解析到整个语句 (如落在关键字上) 时反而返回 None
+    if node.kind in _CONSTRAINT_STATEMENT_KINDS:
+        return node
+
+    # 向上找到根节点 (translation unit)
+    root = node
+    while root and root.kind != CursorKind.TRANSLATION_UNIT:
+        root = root.semantic_parent
+
+    if root is None or root.kind != CursorKind.TRANSLATION_UNIT:
+        return None
+
+    # 构建 parent_map
+    parent_map = _build_parent_map(root)
+
+    # 获取所有祖先节点
+    ancestors = _get_ancestors(node, parent_map)
+
+    # 找到第一个约束语句类型的祖先
+    for ancestor in ancestors:
+        if ancestor.kind in _CONSTRAINT_STATEMENT_KINDS:
+            return ancestor
+
+    return None
+
 def get_cursor_text(cur: Cursor) -> str:
     # 读取游标覆盖的完整源码文本 (可能跨多行), 供文本匹配使用
     src_file = cur.extent.start.file
@@ -282,8 +379,8 @@ def get_cursor_text(cur: Cursor) -> str:
 # --- 使用示例 ---
 if __name__ == "__main__":
     target_file = "./test_proj/example.c"
-    target_line = 7  # 第 5 行
-    target_col = 9  # 第 1 列 (如果不确定具体列，通常从 1 开始尝试，或者解析该行文本找到第一个非空字符)
+    target_line = 6  # 第 5 行
+    target_col = 5  # 第 1 列 (如果不确定具体列，通常从 1 开始尝试，或者解析该行文本找到第一个非空字符)
 
     # 为了演示，先创建一个简单的测试文件
 
