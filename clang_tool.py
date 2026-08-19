@@ -52,6 +52,22 @@ def parse_int_literal(text: str) -> int | None:
         return None
 
 
+def literal_value_from_cursor(cursor: Cursor) -> int | None:
+    s, e = cursor.extent.start, cursor.extent.end
+    if s.line != e.line or e.column <= s.column:
+        return None
+    try:
+        with open(cursor.location.file, "r", encoding="utf-8", errors="ignore") as f:
+            line_text = f.readlines()[s.line - 1]
+    except Exception:
+        return None
+    # libclang 列按 UTF-8 字节计, 按字节区间切取再解码
+    line_bytes = line_text.encode("utf-8", errors="ignore")
+    return parse_int_literal(
+        line_bytes[s.column - 1 : e.column - 1].decode("utf-8", errors="ignore")
+    )
+
+
 def get_macro_int_value(
     file_path, line_num: int, col_num: int, args: list | None = None
 ) -> int | None:
@@ -182,7 +198,7 @@ def _loc_key(loc) -> tuple[int, int]:
 
 def cursor_contains(node: Cursor, target: Cursor) -> bool:
     """判断 node 的源码范围是否包含 target 的位置"""
-    if node.extent.start.file != target.extent.start.file:
+    if str(node.extent.start.file) != str(target.extent.start.file):
         return False
     return (
         _loc_key(node.extent.start)
@@ -244,7 +260,7 @@ def get_same_level_nodes(block: Cursor, node: Cursor) -> list[Cursor]:
     pos = _loc_key(node.extent.start)
     result = []
     for child in block.get_children():
-        if child.extent.start.file != node.extent.start.file:
+        if str(child.extent.start.file) != str(node.extent.start.file):
             continue
         if _loc_key(child.extent.start) <= pos:
             result.append(child)

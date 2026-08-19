@@ -16,6 +16,7 @@ from clang_tool import (
     get_innermost_block,
     get_same_level_nodes,
     get_cursor_text,
+    literal_value_from_cursor,
 )
 from data_structure import Problem
 from clangd_tool import (
@@ -779,8 +780,10 @@ class Checker_47S(Checker):
             logger.debug("不是普通数组, 不检查")
             return problem
 
+        # 提取数组名称
         arr_name = problem.rule_name.token.split("[*]")[0]
         if not re.search(r"\[|\.|->", arr_name):
+            # 数组不是 数组元素 结构体成员 或者 指针指向的对象
             arr_name = arr_name.strip()
         elif not "[" in arr_name:
             arr_name = re.split(r"->|\.", arr_name)[-1]
@@ -791,8 +794,6 @@ class Checker_47S(Checker):
             return problem
 
         logger.debug(f"数组名称为 {arr_name}")
-
-        clangd_args = code_tool.get_args(problem.code_line[0].path)
 
         # 文本检查是否存在多种数组下标的访问, 比如这行文本种出现了 arr[i]+arr[i+1],  如果是则直接退出
         def extract_subscripts(var_name, expression) -> set[str]:
@@ -847,7 +848,11 @@ class Checker_47S(Checker):
 
         # 去重后若只剩一种下标形式 (如 arr[i] + arr[i]) 可以继续检查;
         # 出现多种下标形式 (如 arr[i] + arr[j]) 则保守退出
-        all_subscript_text = extract_subscripts(arr_name, problem.code_line[0].token)
+
+
+        all_subscript_text: set[str] = extract_subscripts(
+            arr_name, problem.code_line[0].token
+        )
         if len(all_subscript_text) != 1:
             logger.warning("下标情况复杂, 不再检查直接退出")
             return problem
@@ -856,12 +861,16 @@ class Checker_47S(Checker):
             return problem
 
         idx_name: str = list(all_subscript_text)[0].strip()
+        # TODO 需要检查idx_name是否是一个复杂的表达式?, 如果是复杂的表达式 比如 idx+1 structure.idx 这种也直接退出不判断
+        #  具体实现可以游标解析整个 [idx+1], 看这个下标表达式中有几个子节点, 或者直接从字符串模式匹配
 
-        # 在代码行中定位 "arr[idx]" 区域, 避免 idx/arr 在行内更早的位置先出现
-        # (比如 i = arr[i] 或 foo(0, arr[1])) 导致取到错误的游标
+        source_file_abs = problem.file_path1(code_tool.proj_dir)
+        with open(source_file_abs, "r", errors="replace") as f:
+            raw_code_line_text = f.readlines()[problem.code_line[0].line - 1]
+
         access_match = re.search(
             re.escape(arr_name) + r"\[\s*(" + re.escape(idx_name) + r")\s*\]",
-            problem.code_line[0].token,
+            raw_code_line_text,
         )
         if not access_match:
             logger.warning("无法在代码行中定位数组访问")
@@ -873,6 +882,8 @@ class Checker_47S(Checker):
         # 下标内容起始列 (1-based)
         idx_col = access_match.start(1) + 1
 
+        clangd_args = code_tool.get_args(problem.code_line[0].path)
+
         # 数组下标的cursor
         idx_cursor = get_cursor_at_line(
             src_path, problem.code_line[0].line, idx_col, clangd_args
@@ -883,15 +894,9 @@ class Checker_47S(Checker):
             src_path, problem.code_line[0].line, arr_col, clangd_args
         )
 
-        # 语句的cursor
-        statement_cursor = get_cursor_at_line(
-            src_path, problem.code_line[0].line, 1, clangd_args
-        )
-
         if not idx_cursor or not arr_cursor:
             logger.warning("数组/下标游标获取失败")
             return problem
-
 
         if arr_cursor.kind not in {
             CursorKind.DECL_REF_EXPR,
@@ -909,40 +914,17 @@ class Checker_47S(Checker):
 
         # 部分 libclang 版本里 INTEGER_LITERAL.spelling 为空,
         # 改用 token 文本 / 源码 extent 取值
-        def _literal_value_from_extent(cursor) -> int | None:
-            s, e = cursor.extent.start, cursor.extent.end
-            if s.line != e.line or e.column <= s.column:
-                return None
-            try:
-                with open(src_path, "r", encoding="utf-8", errors="ignore") as f:
-                    line_text = f.readlines()[s.line - 1]
-            except Exception:
-                return None
-            # libclang 列按 UTF-8 字节计, 按字节区间切取再解码
-            line_bytes = line_text.encode("utf-8", errors="ignore")
-            return parse_int_literal(
-                line_bytes[s.column - 1 : e.column - 1].decode("utf-8", errors="ignore")
-            )
-
         if "literal" in str(idx_cursor.kind).lower():
-            idx_value = None
-            try:
-                toks = list(idx_cursor.get_tokens())
-                if toks:
-                    idx_value = parse_int_literal(toks[0].spelling)
-            except Exception:
-                idx_value = None
+            idx_value = literal_value_from_cursor(idx_cursor)
             if idx_value is None:
-                idx_value = _literal_value_from_extent(idx_cursor)
-            if idx_value is None:
-                logger.warning("无法处理数字下标的字面量")
+                logger.warning("无法处理数字下标的字面量值")
                 return problem
             # 访问确实在界内 (0 <= idx < arr_size) 才算误报
             if 0 <= idx_value < arr_size:
                 problem.set_false()
                 return problem
         elif idx_cursor.kind in (
-            CursorKind.ARRAY_SUBSCRIPT_EXPR,
+            CursorKind.ARRAY_SUBSCRIPT_EXPR,  # TODO 这里似乎不用?
             CursorKind.MACRO_INSTANTIATION,
         ):
             # 宏展开下标 (如 arr[N]): 尝试从宏定义解析字面值
@@ -963,11 +945,12 @@ class Checker_47S(Checker):
             if 0 <= idx_value < arr_size:
                 problem.set_false()
                 return problem
-        else:
-            # 不是枚举引用的通常变量
-            # 父节点约束检查暂未实现, 保守不判误报
-            logger.debug("变量下标暂不检查: {}".format(idx_name))
-            return problem
+        elif idx_cursor.kind == CursorKind.DECL_REF_EXPR:
+            # 下标是变量的情况, 需要检查上层中的约束, 比如
+            # for (i = 0; i < 10; ++i) {f(x); arr[i];}
+            # 对于arr[i] 需要定位到父节点 for (i = 0; i < 10; ++i) 然后检查约束是否充分
+            pass
+
         return problem
 
 
