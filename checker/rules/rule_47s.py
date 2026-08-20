@@ -4,7 +4,7 @@ checker.rules.rule_47s - 规则 47S: 数组越界.
 
 import re
 
-from clang.cindex import Cursor, CursorKind
+from clang.cindex import Cursor, CursorKind, TypeKind
 from MyPyLib.LogSet import logSetup
 from data_structure import Problem
 
@@ -13,6 +13,7 @@ from ..context import CodeContext
 from clang_tool import (
     cursor_at,
     get_first_ancestor,
+    get_constraint,
     get_macro_int_value,
     get_parent_node,
     literal_value_from_cursor,
@@ -20,6 +21,136 @@ from clang_tool import (
 )
 
 logger = logSetup(__name__)
+
+# 无符号整型种类 (无符号类型天然满足 i >= 0)
+_UNSIGNED_INT_KINDS = frozenset(
+    getattr(TypeKind, n)
+    for n in ("UCHAR", "USHORT", "UINT", "ULONG", "ULONGLONG", "UINT128")
+    if hasattr(TypeKind, n)
+)
+
+
+def _is_unsigned_type(cursor: Cursor) -> bool:
+    """判断下标变量是否为无符号整数类型"""
+    try:
+        return cursor.type.get_canonical().kind in _UNSIGNED_INT_KINDS
+    except Exception:
+        return False
+
+
+def _is_ref_to(node: Cursor, idx_name: str) -> bool:
+    """判断表达式是否为对 idx_name 变量的引用 (去掉 libclang 包装层)"""
+    while node is not None and node.kind in (
+        CursorKind.UNEXPOSED_EXPR,
+        CursorKind.PAREN_EXPR,
+    ):
+        kids = list(node.get_children())
+        if len(kids) != 1:
+            break
+        node = kids[0]
+    return (
+        node is not None
+        and node.kind == CursorKind.DECL_REF_EXPR
+        and node.spelling == idx_name
+    )
+
+
+def _has_write_to(node: Cursor, idx_name: str) -> bool:
+    """
+    遍历子树, 判断是否存在对 idx_name 变量的写操作
+    (赋值 / += 等复合赋值 / ++ -- 自增自减).
+    只检查直接对变量本身的写, 不追踪指针别名等复杂数据流.
+    """
+    kind = node.kind
+    kids = list(node.get_children())
+    if kind == CursorKind.BINARY_OPERATOR and node.spelling == "=":
+        if kids and _is_ref_to(kids[0], idx_name):
+            return True
+    elif kind == CursorKind.COMPOUND_ASSIGNMENT_OPERATOR:
+        if kids and _is_ref_to(kids[0], idx_name):
+            return True
+    elif kind == CursorKind.UNARY_OPERATOR:
+        try:
+            op_token = next(
+                (t.spelling for t in node.get_tokens() if t.spelling in ("++", "--")),
+                None,
+            )
+        except Exception:
+            op_token = None
+        if op_token and kids and _is_ref_to(kids[0], idx_name):
+            return True
+    for child in kids:
+        if _has_write_to(child, idx_name):
+            return True
+    return False
+
+
+def _index_unmodified_in_guarded_region(parent_node: Cursor, idx_cursor: Cursor) -> bool:
+    """
+    保守检查: 约束语句的有效区域 (for/while 循环体、if 的 then 分支) 内
+    是否对下标变量有写操作. 若有, 约束可能在访问前被破坏, 不再判误报.
+    """
+    idx_name = idx_cursor.spelling
+    kids = list(parent_node.get_children())
+    if parent_node.kind == CursorKind.FOR_STMT:
+        if not kids:
+            return False
+        region = kids[-1]  # 循环体 (init/inc 由约束提取自行处理)
+    elif parent_node.kind == CursorKind.WHILE_STMT:
+        if len(kids) < 2:
+            return False
+        region = kids[-1]
+    elif parent_node.kind == CursorKind.IF_STMT:
+        if len(kids) < 2:
+            return False
+        region = kids[1]  # then 分支
+    else:
+        return False
+    return not _has_write_to(region, idx_name)
+
+
+def _constraints_prove_in_bounds(
+    constraints: set[str], idx_cursor: Cursor, arr_size: int
+) -> bool:
+    """
+    判断约束集合能否证明 0 <= idx < arr_size:
+    - i == C 且 0 <= C < arr_size → 界内
+    - 同时存在足够强的上界 (i < U / i <= U, 且 U <= arr_size)
+      与下界 (i >= L / i > L, 且 L >= 0); 无符号下标天然满足下界
+    """
+    idx_name = idx_cursor.spelling
+    pattern = re.compile(
+        rf"^\s*{re.escape(idx_name)}\s*(<=|>=|<|>|==)\s*(-?\d+)\s*$"
+    )
+    upper = None  # 排他上界: idx < upper
+    lower = None  # 包含下界: idx >= lower
+    equality = None
+    for text in constraints:
+        m = pattern.match(text)
+        if not m:
+            continue
+        op, value = m.group(1), int(m.group(2))
+        if op == "<":
+            bound = value
+            upper = value if upper is None else min(upper, bound)
+        elif op == "<=":
+            bound = value + 1
+            upper = value + 1 if upper is None else min(upper, bound)
+        elif op == ">":
+            bound = value + 1
+            lower = value + 1 if lower is None else max(lower, bound)
+        elif op == ">=":
+            bound = value
+            lower = value if lower is None else max(lower, bound)
+        else:  # ==
+            equality = value
+    if equality is not None:
+        return 0 <= equality < arr_size
+    if upper is None or upper > arr_size:
+        return False
+    if _is_unsigned_type(idx_cursor):
+        return True
+    return lower is not None and lower >= 0
 
 
 @register_checker("47S", "数组越界")
@@ -228,7 +359,19 @@ class Checker_47S(Checker):
                 # 找不到约束节点, 无法证明访问在界内, 保守不判误报
                 logger.debug("未找到下标变量的约束语句, 保守退出")
                 return problem
-            # TODO: 后续用 get_constraint(parent_node, idx_cursor) 分析约束是否充分
+            constraints = get_constraint(parent_node, idx_cursor)
+            if constraints is None:
+                logger.debug("约束语句类型/访问位置不受支持, 保守退出")
+                return problem
+            if not constraints:
+                logger.debug("未提取到有效的下标约束, 保守退出")
+                return problem
+            if not _index_unmodified_in_guarded_region(parent_node, idx_cursor):
+                logger.debug("约束区域内存在对下标变量的修改, 保守退出")
+                return problem
+            if _constraints_prove_in_bounds(constraints, idx_cursor, arr_size):
+                logger.debug(f"约束 {sorted(constraints)} 可证明下标在界内, 判为误报")
+                problem.set_false()
             return problem
 
         return problem
