@@ -1,28 +1,33 @@
 # 利用clangd 工具定位引用
+import atexit
 import json
 import queue
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from urllib.parse import quote, unquote
 from MyPyLib.LogSet import logSetup
+from MyPyLib.Common import elapse
 
 logger = logSetup(__name__)
 
 Clangd_EXE = r"c:\msys64\mingw64\bin\clangd.exe"
 
+
+# ============================================================
+# 路径 / URI 互转
+# ============================================================
+
 def path_to_file_uri(path: str | Path) -> str:
     """
     磁盘路径转换为链接路径
     """
-    # Windows: 绝对路径如 C:\a\b.cpp -> file:///C:/a/b.cpp
-    # Linux/macOS: /a/b.cpp -> file:///a/b.cpp
     path = Path(path).absolute().as_posix()
     if len(path) >= 2 and path[1] == ":":
         # window 路径
         return "file:///" + quote(path[0] + ":" + path[2:])
-
     # Unix路径
     return "file://" + quote(path)
 
@@ -30,31 +35,22 @@ def path_to_file_uri(path: str | Path) -> str:
 def file_url_to_path(url: str) -> Path:
     """
     将 file:// URI 转换回本地文件系统路径 (Path 对象)。
-
-    处理逻辑：
-    1. 解析 URL 结构。
-    2. 处理 URL 编码 (如 %20 转为空格)。
-    3. 区分 Windows 和 Unix 路径：
-       - Windows: file:///C:/path
-       - Unix:    file:///path
     """
     if not url.startswith("file://"):
         raise ValueError(f"Invalid file URI: {url}")
-
-    # 1. 去掉 file:// 前缀
-    path_part = url[7:]  # 去掉 "file://"
-
-    # 2. URL 解码 (处理 %20, %E4%B8%AD%E6%96%87 等)
+    path_part = url[7:]
     path_part = unquote(path_part)
-
     if len(path_part) >= 3 and path_part[0] == "/" and path_part[2] == ":":
-        # 判断是否为 Windows 路径
         drive_letter = path_part[1]
         remaining_path = path_part[3:]
         windows_path = f"{drive_letter}:{remaining_path}"
         return Path(windows_path)
     return Path(path_part)
 
+
+# ============================================================
+# LSP 底层收发
+# ============================================================
 
 def lsp_send(proc, msg: dict):
     data = json.dumps(msg, ensure_ascii=False).encode("utf-8")
@@ -64,13 +60,13 @@ def lsp_send(proc, msg: dict):
     proc.stdin.flush()
 
 
-def lsp_read_responses(proc: subprocess.Popen, out_q):
+def lsp_read_responses(proc: subprocess.Popen, resp_q: "queue.Queue", notify_q: "queue.Queue"):
     """
-    读 LSP 响应：解析 Content-Length + body
-    为了简化：只把整条 response 消息放入队列
+    读 LSP 响应 / 通知：解析 Content-Length + body
+    - 带 "id" 的消息（对我们请求的响应）放入 resp_q
+    - 不带 "id" 的消息（通知，比如 $/progress、publishDiagnostics）放入 notify_q
     """
     while True:
-        # 读到空行前的头
         header_lines = []
         line = b""
         while True:
@@ -92,10 +88,27 @@ def lsp_read_responses(proc: subprocess.Popen, out_q):
             continue
         try:
             msg = json.loads(body.decode("utf-8"))
-            out_q.put(msg)
         except Exception:
-            # 忽略不可解析
-            pass
+            continue
+        if "id" in msg:
+            resp_q.put(msg)
+        else:
+            notify_q.put(msg)
+
+
+def lsp_drain_stderr(proc: subprocess.Popen):
+    """
+    持续读取并丢弃/记录 stderr。
+    不消费 stderr 会导致管道缓冲区写满、clangd 阻塞在写日志上，
+    进而 stdout 也不再产生响应，表现为"卡住直到超时"。
+    """
+    try:
+        for raw_line in iter(proc.stderr.readline, b""):
+            if not raw_line:
+                break
+            logger.debug("[clangd stderr] %s", raw_line.decode(errors="ignore").rstrip())
+    except Exception:
+        pass
 
 
 def build_text_document_didOpen(text: str, file_path: str | Path):
@@ -105,7 +118,7 @@ def build_text_document_didOpen(text: str, file_path: str | Path):
         "params": {
             "textDocument": {
                 "uri": path_to_file_uri(file_path),
-                "languageId": "cpp",  # 你也可以按后缀改：c/cpp/objc 等
+                "languageId": "cpp",
                 "version": 1,
                 "text": text,
             }
@@ -113,128 +126,338 @@ def build_text_document_didOpen(text: str, file_path: str | Path):
     }
 
 
-def lsp_request(proc: subprocess.Popen, out_q, msg: dict, timeout=30):
+def lsp_request(proc: subprocess.Popen, resp_q: "queue.Queue", msg: dict, timeout=1000):
     req_id = msg["id"]
     lsp_send(proc, msg)
-    # 等待同 id 的 response
-    import time
-
     t0 = time.time()
     while True:
         if time.time() - t0 > timeout:
             raise TimeoutError(f"LSP request id={req_id} timeout")
         try:
-            r = out_q.get(timeout=0.1)
+            r = resp_q.get(timeout=0.1)
         except queue.Empty:
             continue
         if r.get("id") == req_id:
             return r
+        # 理论上 resp_q 里只会有 id 对应的响应，这里兜底忽略不匹配的
 
 
+def wait_for_background_index(
+    notify_q: "queue.Queue",
+    idle_timeout: float = 20.0,
+    overall_timeout: float = 3600.0,
+    first_message_timeout: float = 30.0,
+):
+    """
+    等待 clangd 后台索引完成，再返回。
+
+    终止条件（谁先满足就退出）：
+      1. 收到了 indexing 相关 token 的 "end" 事件 —— 正常完成；
+      2. 已经收到过至少一次进度通知，但连续 idle_timeout 秒都没有新通知
+         —— 认为索引已经稳定；
+      3. 一次进度通知都没收到过，且超过了 first_message_timeout ——
+         说明 clangd 不会发进度通知（版本不支持，或索引早已建好磁盘缓存、
+         这次启动无事可做），直接放弃等待、马上去查询，避免死等到
+         overall_timeout。
+    """
+    seen_progress = False
+    active_tokens = set()
+    t_start = time.time()
+
+    while True:
+        now = time.time()
+        if now - t_start > overall_timeout:
+            logger.warning("等待后台索引完成超过 overall_timeout=%ss，放弃等待，直接继续查询", overall_timeout)
+            return False
+
+        try:
+            msg = notify_q.get(timeout=idle_timeout)
+        except queue.Empty:
+            if seen_progress:
+                logger.info("索引通知已静默 %ss，认为后台索引已完成（或已停滞）", idle_timeout)
+                return True
+            if now - t_start > first_message_timeout:
+                logger.warning(
+                    "等待 %ss 仍未收到任何 $/progress 索引通知，"
+                    "不再等待，直接继续查询",
+                    first_message_timeout,
+                )
+                return True
+            continue
+
+        method = msg.get("method")
+        if method != "$/progress":
+            continue
+
+        params = msg.get("params", {})
+        token = params.get("token")
+        value = params.get("value", {})
+        kind = value.get("kind")
+        title = value.get("title", "")
+        percentage = value.get("percentage")
+
+        seen_progress = True
+        logger.info("[index progress] token=%s kind=%s title=%s pct=%s", token, kind, title, percentage)
+
+        if kind == "begin":
+            active_tokens.add(token)
+        elif kind == "end":
+            active_tokens.discard(token)
+            if not active_tokens:
+                logger.info("所有索引进度 token 均已结束，后台索引完成")
+                return True
+
+
+# ============================================================
+# 长驻 clangd 会话
+#
+# 重构要点：以前每次调用 find_references 都会重新起一个 clangd 进程、
+# 重新等一次索引（哪怕只是等 first_message_timeout 那 20~30s）。
+# 现在把"进程 + 是否已确认索引完成"绑定成一个 ClangdSession 对象，
+# 用全局字典按 (project_dir, compile_dir, clangd_exe) 缓存 session：
+#   - 索引等待只在该 session 第一次被查询时发生一次；
+#   - session._index_ready 这个标记位一旦为 True，
+#     后续同一个 session 上的所有查询都会直接跳过等待。
+# ============================================================
+
+class ClangdSession:
+    def __init__(self, project_dir: str | Path, compile_dir: str | Path, clangd_exe: str = Clangd_EXE):
+        self.project_dir = Path(project_dir).absolute().as_posix()
+        self.compile_dir = Path(compile_dir).absolute().as_posix()
+        self.clangd_exe = clangd_exe
+
+        self.proc = subprocess.Popen(
+            [
+                clangd_exe,
+                "--background-index",
+                f"--compile-commands-dir={self.compile_dir}",
+                "--log=verbose",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+        )
+
+        self.resp_q: "queue.Queue" = queue.Queue()
+        self.notify_q: "queue.Queue" = queue.Queue()
+
+        self.reader = threading.Thread(
+            target=lsp_read_responses, args=(self.proc, self.resp_q, self.notify_q), daemon=True
+        )
+        self.reader.start()
+
+        self.stderr_drainer = threading.Thread(
+            target=lsp_drain_stderr, args=(self.proc,), daemon=True
+        )
+        self.stderr_drainer.start()
+
+        self._id_lock = threading.Lock()
+        self._next_id = 1
+        self._opened_files: set[str] = set()
+
+        # 关键的全局（会话级）标记：索引是否已经确认处理过（完成 / 放弃等待）。
+        # 一旦置 True，本 session 生命周期内不会再进入 wait_for_background_index。
+        self._index_ready = False
+        self._index_ready_lock = threading.Lock()
+
+        self._initialize()
+
+    def _alloc_id(self) -> int:
+        with self._id_lock:
+            self._next_id += 1
+            return self._next_id
+
+    def _initialize(self):
+        init_req = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "processId": None,
+                "rootPath": self.project_dir,
+                "rootUri": path_to_file_uri(self.project_dir),
+                "capabilities": {
+                    "window": {"workDoneProgress": True},
+                    "textDocument": {
+                        "references": {"dynamicRegistration": False},
+                        "documentSymbol": {"dynamicRegistration": False},
+                    },
+                },
+            },
+        }
+        lsp_request(self.proc, self.resp_q, init_req, timeout=60)
+        lsp_send(self.proc, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
+
+    def is_alive(self) -> bool:
+        return self.proc.poll() is None
+
+    def ensure_index_ready(
+        self,
+        idle_timeout: float = 20.0,
+        overall_timeout: float = 3600.0,
+        first_message_timeout: float = 30.0,
+    ) -> bool:
+        """
+        确保索引已经处理过一次。已经确认过的话直接返回，不再重新等待。
+        """
+        with self._index_ready_lock:
+            if self._index_ready:
+                logger.info("索引在本会话（pid=%s）中已确认完成，跳过等待", self.proc.pid)
+                return True
+            finished = wait_for_background_index(
+                self.notify_q,
+                idle_timeout=idle_timeout,
+                overall_timeout=overall_timeout,
+                first_message_timeout=first_message_timeout,
+            )
+            # 无论是正常收到 end、静默判定完成，还是放弃等待，
+            # 都标记为"已处理过"，本 session 后续查询不再重复等待。
+            self._index_ready = True
+            return finished
+
+    def open_file(self, target_file: str | Path):
+        target_file = Path(target_file).absolute().as_posix()
+        if target_file in self._opened_files:
+            return
+        with open(target_file, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        lsp_send(self.proc, build_text_document_didOpen(text, target_file))
+        self._opened_files.add(target_file)
+
+    def find_references(
+        self,
+        target_file: str | Path,
+        line_0based: int,
+        character_0based: int,
+        include_declaration: bool = False,
+        wait_index: bool = True,
+        index_idle_timeout: float = 20.0,
+        index_overall_timeout: float = 3600.0,
+        index_first_message_timeout: float = 30.0,
+        request_timeout: float = 1200.0,
+    ):
+        target_file = Path(target_file).absolute().as_posix()
+        self.open_file(target_file)
+
+        if wait_index:
+            self.ensure_index_ready(
+                idle_timeout=index_idle_timeout,
+                overall_timeout=index_overall_timeout,
+                first_message_timeout=index_first_message_timeout,
+            )
+
+        req_id = self._alloc_id()
+        refs_req = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "textDocument/references",
+            "params": {
+                "textDocument": {"uri": path_to_file_uri(target_file)},
+                "position": {"line": line_0based, "character": character_0based},
+                "context": {"includeDeclaration": include_declaration},
+            },
+        }
+        refs_resp = lsp_request(self.proc, self.resp_q, refs_req, timeout=request_timeout)
+
+        result = refs_resp.get("result")
+        locations = result or []
+        out = []
+        for loc in locations:
+            uri = loc.get("uri")
+            r = loc.get("range", {})
+            start = r.get("start", {})
+            out.append(
+                {"uri": file_url_to_path(uri), "start": start, "end": r.get("end", {})}
+            )
+        return out
+
+    def close(self):
+        try:
+            self.proc.terminate()
+        except Exception:
+            pass
+
+
+# ---- 全局 session 缓存：同一个 (project_dir, compile_dir, clangd_exe) 只保留一个长驻进程 ----
+_SESSIONS: dict[str, ClangdSession] = {}
+_SESSIONS_LOCK = threading.Lock()
+
+
+def _session_key(project_dir, compile_dir, clangd_exe) -> str:
+    return "|".join(
+        [
+            Path(project_dir).absolute().as_posix(),
+            Path(compile_dir).absolute().as_posix(),
+            clangd_exe,
+        ]
+    )
+
+
+def get_session(project_dir: str | Path, compile_dir: str | Path, clangd_exe: str = Clangd_EXE) -> ClangdSession:
+    key = _session_key(project_dir, compile_dir, clangd_exe)
+    with _SESSIONS_LOCK:
+        session = _SESSIONS.get(key)
+        if session is None or not session.is_alive():
+            if session is not None:
+                logger.warning("旧的 clangd 会话(pid=%s)已退出，重新启动一个", session.proc.pid)
+            session = ClangdSession(project_dir, compile_dir, clangd_exe)
+            _SESSIONS[key] = session
+        return session
+
+
+def close_all_sessions():
+    with _SESSIONS_LOCK:
+        for session in _SESSIONS.values():
+            session.close()
+        _SESSIONS.clear()
+
+
+atexit.register(close_all_sessions)
+
+
+# ============================================================
+# 对外接口：函数签名保持不变，内部改为复用长驻 session
+# ============================================================
+
+@elapse
 def find_references(
     project_dir: str | Path,
-    compile_commands_json: str | Path,
+    compile_dir: str | Path,
     target_file: str | Path,
     line_0based: int,
     character_0based: int,
     include_declaration: bool = False,
     clangd_exe: str = Clangd_EXE,
+    wait_index: bool = True,
+    index_idle_timeout: float = 20.0,
+    index_overall_timeout: float = 3600.0,
+    request_timeout: float = 1200.0,
 ):
     """
-    查找一个函数符号的所有引用
-    :param clangd_exe:
-    :param project_dir:
-    :param target_file:
-    :param line_0based:
-    :param character_0based:
-    :param include_declaration:
-    :return:
+    查找一个函数符号的所有引用。
+
+    内部改为使用按 (project_dir, compile_dir, clangd_exe) 缓存的长驻
+    ClangdSession：
+      - 同一组参数只会启动一个 clangd 进程，重复调用会复用它；
+      - 索引只在该 session 第一次被查询时等待一次
+        （session._index_ready 标记），之后的调用直接查询，
+        不再重新进入 20~30s 的等待。
+
+    如果确定要强制新起一个干净的 clangd 进程重新走一遍索引等待，
+    调用前先 close_all_sessions()，或直接用 ClangdSession(...) 手动创建。
     """
-    project_dir = Path(project_dir).absolute().as_posix()
-    target_file = Path(target_file).absolute().as_posix()
-    compile_dir = Path(compile_commands_json).parent.absolute().as_posix()
-
-    # 读目标文件全文（didOpen 需要 text）
-    with open(target_file, "r", encoding="utf-8", errors="replace") as f:
-        text = f.read()
-
-    proc = subprocess.Popen(
-        [
-            clangd_exe,
-            "--background-index",
-            f"--compile-commands-dir={compile_dir}",
-            # 可以加："--log=verbose"
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=0,
+    session = get_session(project_dir, compile_dir, clangd_exe)
+    return session.find_references(
+        target_file=target_file,
+        line_0based=line_0based,
+        character_0based=character_0based,
+        include_declaration=include_declaration,
+        wait_index=wait_index,
+        index_idle_timeout=index_idle_timeout,
+        index_overall_timeout=index_overall_timeout,
+        request_timeout=request_timeout,
     )
-
-    out_q = queue.Queue()
-    reader = threading.Thread(
-        target=lsp_read_responses, args=(proc, out_q), daemon=True
-    )
-    reader.start()
-
-    # 1) initialize
-    init_req = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "processId": None,
-            "rootPath": project_dir,
-            "rootUri": path_to_file_uri(project_dir),
-            "capabilities": {
-                "textDocument": {
-                    "references": {"dynamicRegistration": False},
-                    "documentSymbol": {"dynamicRegistration": False},
-                }
-            },
-        },
-    }
-    init_resp = lsp_request(proc, out_q, init_req)
-    # 2) initialized notification
-    lsp_send(proc, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
-
-    # 3) didOpen（让 clangd 知道文件内容与当前版本）
-    did_open = build_text_document_didOpen(text, target_file)
-    lsp_send(proc, did_open)
-
-    # 4) references
-    req_id = 2
-    refs_req = {
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "method": "textDocument/references",
-        "params": {
-            "textDocument": {"uri": path_to_file_uri(target_file)},
-            "position": {
-                "line": line_0based,  # LSP line: 0-based
-                "character": character_0based,  # 由你提供：assume 0-based
-            },
-            "context": {"includeDeclaration": include_declaration},
-        },
-    }
-    refs_resp = lsp_request(proc, out_q, refs_req)
-
-    # 5) 解析结果
-    result = refs_resp.get("result")
-    # result 可能为 None 或 Location[]
-    locations = result or []
-    out = []
-    for loc in locations:
-        uri = loc.get("uri")
-        r = loc.get("range", {})
-        start = r.get("start", {})
-        out.append(
-            {"uri": file_url_to_path(uri), "start": start, "end": r.get("end", {})}
-        )
-
-    # （可选）关闭进程
-    proc.terminate()
-    return out
 
 
 def kill_all_clangd_processes():
@@ -242,38 +465,34 @@ def kill_all_clangd_processes():
     终止系统中所有正在运行的 clangd 进程.
 
     用途: multiprocessing.Pool 退出时, worker 进程可能被 terminate(),
-    其内部 find_references 启动的 clangd 子进程会变孤儿. 本函数在
-    Pool 退出后兜底清理, 避免残留进程占用资源或持有文件锁.
+    其内部启动的 clangd 子进程会变孤儿. 本函数在 Pool 退出后兜底清理.
+    正常退出流程应优先调用 close_all_sessions()，这个函数只是兜底。
 
-    注意: 会杀掉系统里所有名为 clangd 的进程. 如果有 IDE 等其他程序
-    也在用 clangd, 也会被一起终止. 调用方需确保这是期望行为.
+    注意: 会杀掉系统里所有名为 clangd 的进程.
     """
+    with _SESSIONS_LOCK:
+        _SESSIONS.clear()
+
     if sys.platform == "win32":
-        # /F 强制终止, /T 连子进程一起终止, /IM 按映像名
         cmd = ["taskkill", "/F", "/T", "/IM", "clangd.exe"]
     else:
-        # -9 强制 SIGKILL, -f 匹配命令行
         cmd = ["pkill", "-9", "-f", "clangd"]
 
     try:
-        # 没有 clangd 进程时 taskkill/pkill 返回非 0, 不算错误, 用 check=False
         subprocess.run(cmd, capture_output=True, check=False)
     except FileNotFoundError:
-        # 系统没有 taskkill / pkill 命令, 静默跳过
         pass
 
 
 def get_ref_code(ref_code_locaitons: list[dict]) -> list[str]:
     """
     从定位的引用位置中提取代码
-    :param ref_code_locaitons:
-    :return:
     """
     res = []
     for loc in ref_code_locaitons:
         uri = loc["uri"]
         file_path = file_url_to_path(uri)
-        start_line = loc["start"].get("line", "") # 0-based
+        start_line = loc["start"].get("line", "")
         if not start_line:
             continue
         start_line = int(start_line)
@@ -286,23 +505,42 @@ def get_ref_code(ref_code_locaitons: list[dict]) -> list[str]:
             res.append(text[start_line])
     return res
 
+
 if __name__ == "__main__":
-    # 示例：把你的参数填这里
     Clangd_exe = r"D:\Program Files\LLVM\bin\clangd.exe"
     project_dir = r"D:\Code\Python\ReduceFalsePositives\test_proj"
-    compile_commands_json = (
+    compile_commands_json = Path(
         r"D:\Code\Python\ReduceFalsePositives\test_proj\compile_commands.json"
     )
     target_file = r"D:\Code\Python\ReduceFalsePositives\test_proj\a.c"
 
-    refs = find_references(
+    # 第一次调用：会等一次索引（正常完成 / 静默判定 / 放弃等待 三选一）
+    refs1 = find_references(
         clangd_exe=Clangd_exe,
         project_dir=project_dir,
-        compile_commands_json=compile_commands_json,
+        compile_dir=compile_commands_json.parent,
         target_file=target_file,
-        line_0based=1,
+        line_0based=0,
         character_0based=5,
         include_declaration=False,
     )
-    for x in refs:
+    for x in refs1:
         print(x["uri"], x["start"].get("line"), x["start"].get("character"))
+
+    # 第二次调用（同一个 project_dir/compile_dir）：
+    # 复用同一个 clangd 进程，session._index_ready 已经是 True，
+    # 直接查询，不会再等 20~30s。
+    refs2 = find_references(
+        clangd_exe=Clangd_exe,
+        project_dir=project_dir,
+        compile_dir=compile_commands_json.parent,
+        target_file=target_file,
+        line_0based=10,
+        character_0based=3,
+        include_declaration=False,
+    )
+    for x in refs2:
+        print(x["uri"], x["start"].get("line"), x["start"].get("character"))
+
+    close_all_sessions()
+
