@@ -53,6 +53,11 @@ def file_url_to_path(url: str) -> Path:
 # ============================================================
 
 def lsp_send(proc, msg: dict):
+    """
+    发送 LSP 消息
+    :param proc: clangd 进程对象
+    :param msg: LSP 消息字典，包含 id、method、params 等字段
+    """
     data = json.dumps(msg, ensure_ascii=False).encode("utf-8")
     header = f"Content-Length: {len(data)}\r\n\r\n".encode("ascii")
     proc.stdin.write(header)
@@ -112,6 +117,12 @@ def lsp_drain_stderr(proc: subprocess.Popen):
 
 
 def build_text_document_didOpen(text: str, file_path: str | Path):
+    """
+    构建 textDocument/didOpen 请求消息
+    :param text: 文本内容
+    :param file_path: 文件路径
+    :return: textDocument/didOpen 请求消息
+    """
     return {
         "jsonrpc": "2.0",
         "method": "textDocument/didOpen",
@@ -127,6 +138,14 @@ def build_text_document_didOpen(text: str, file_path: str | Path):
 
 
 def lsp_request(proc: subprocess.Popen, resp_q: "queue.Queue", msg: dict, timeout=1000):
+    """
+    发送 LSP 请求并等待响应
+    :param proc: clangd 进程对象
+    :param resp_q: 响应队列
+    :param msg: LSP 请求消息
+    :param timeout: 超时时间（毫秒）
+    :return: LSP 响应消息
+    """
     req_id = msg["id"]
     lsp_send(proc, msg)
     t0 = time.time()
@@ -239,21 +258,25 @@ class ClangdSession:
             bufsize=0,
         )
 
+        # LSP 响应队列
         self.resp_q: "queue.Queue" = queue.Queue()
+        # LSP 通知队列
         self.notify_q: "queue.Queue" = queue.Queue()
-
+        # LSP 响应读取线程
         self.reader = threading.Thread(
             target=lsp_read_responses, args=(self.proc, self.resp_q, self.notify_q), daemon=True
         )
         self.reader.start()
-
+        # LSP 进程stderr读取线程
         self.stderr_drainer = threading.Thread(
             target=lsp_drain_stderr, args=(self.proc,), daemon=True
         )
         self.stderr_drainer.start()
 
+        # id 分配锁
         self._id_lock = threading.Lock()
         self._next_id = 1
+        # 已打开的文件集合
         self._opened_files: set[str] = set()
 
         # 关键的全局（会话级）标记：索引是否已经确认处理过（完成 / 放弃等待）。
@@ -261,9 +284,14 @@ class ClangdSession:
         self._index_ready = False
         self._index_ready_lock = threading.Lock()
 
+        # 初始化 clangd 会话, 发送 initialize 请求和 initialized 通知, 让它立即开始索引代码
         self._initialize()
 
     def _alloc_id(self) -> int:
+        """
+        分配一个唯一的请求ID
+        :return: 唯一的请求ID
+        """
         with self._id_lock:
             self._next_id += 1
             return self._next_id
@@ -290,6 +318,10 @@ class ClangdSession:
         lsp_send(self.proc, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
 
     def is_alive(self) -> bool:
+        """
+        检查 clangd 进程是否存活
+        :return: 如果进程存活则返回 True，否则返回 False
+        """
         return self.proc.poll() is None
 
     def ensure_index_ready(
@@ -317,6 +349,10 @@ class ClangdSession:
             return finished
 
     def open_file(self, target_file: str | Path):
+        """
+        打开文件并发送 textDocument/didOpen 通知
+        :param target_file: 文件路径
+        """
         target_file = Path(target_file).absolute().as_posix()
         if target_file in self._opened_files:
             return
@@ -373,6 +409,9 @@ class ClangdSession:
         return out
 
     def close(self):
+        """
+        关闭 clangd 进程
+        """
         try:
             self.proc.terminate()
         except Exception:
@@ -394,7 +433,14 @@ def _session_key(project_dir, compile_dir, clangd_exe) -> str:
     )
 
 
-def get_session(project_dir: str | Path, compile_dir: str | Path, clangd_exe: str = Clangd_EXE) -> ClangdSession:
+def get_session(project_dir: str | Path, compile_dir: str | Path, clangd_exe: str = Clangd_EXE,) -> ClangdSession:
+    """
+    获取一个 clangd 会话
+    :param project_dir: 项目目录
+    :param compile_dir: 编译目录
+    :param clangd_exe: clangd 可执行文件路径
+    :return: clangd 会话对象
+    """
     key = _session_key(project_dir, compile_dir, clangd_exe)
     with _SESSIONS_LOCK:
         session = _SESSIONS.get(key)
@@ -407,6 +453,9 @@ def get_session(project_dir: str | Path, compile_dir: str | Path, clangd_exe: st
 
 
 def close_all_sessions():
+    """
+    关闭所有 clangd 会话
+    """
     with _SESSIONS_LOCK:
         for session in _SESSIONS.values():
             session.close()
@@ -486,7 +535,9 @@ def kill_all_clangd_processes():
 
 def get_ref_code(ref_code_locaitons: list[dict]) -> list[str]:
     """
-    从定位的引用位置中提取代码
+    从定位的引用位置中提取代码行
+    :param ref_code_locaitons: 引用位置列表，每个元素是一个字典，包含 uri 和 start 字段
+    :return: 代码行列表
     """
     res = []
     for loc in ref_code_locaitons:
