@@ -52,24 +52,46 @@ def file_url_to_path(url: str) -> Path:
 # LSP 底层收发
 # ============================================================
 
-def lsp_send(proc, msg: dict):
+def lsp_send(proc, msg: dict, lock=None):
     """
     发送 LSP 消息
     :param proc: clangd 进程对象
     :param msg: LSP 消息字典，包含 id、method、params 等字段
+    :param lock: 可选线程锁。reader 线程应答 server->client 请求与主线程发请求
+                 会并发写 stdin，需要同一把锁串行化，避免消息头/体交错。
     """
-    data = json.dumps(msg, ensure_ascii=False).encode("utf-8")
-    header = f"Content-Length: {len(data)}\r\n\r\n".encode("ascii")
-    proc.stdin.write(header)
-    proc.stdin.write(data)
-    proc.stdin.flush()
+
+    def _do():
+        data = json.dumps(msg, ensure_ascii=False).encode("utf-8")
+        header = f"Content-Length: {len(data)}\r\n\r\n".encode("ascii")
+        proc.stdin.write(header)
+        proc.stdin.write(data)
+        proc.stdin.flush()
+
+    if lock is None:
+        _do()
+    else:
+        with lock:
+            _do()
 
 
-def lsp_read_responses(proc: subprocess.Popen, resp_q: "queue.Queue", notify_q: "queue.Queue"):
+def lsp_read_responses(
+    proc: subprocess.Popen,
+    resp_q: "queue.Queue",
+    notify_q: "queue.Queue",
+    pending_ids: set | None = None,
+    pending_lock: threading.Lock | None = None,
+    send_lock: threading.Lock | None = None,
+):
     """
     读 LSP 响应 / 通知：解析 Content-Length + body
-    - 带 "id" 的消息（对我们请求的响应）放入 resp_q
-    - 不带 "id" 的消息（通知，比如 $/progress、publishDiagnostics）放入 notify_q
+
+    消息分三类：
+    - 带 "id" 且该 id 是我们发过请求的 id -> 对我们请求的响应，放入 resp_q；
+    - 带 "id" 但 id 不是我们发过的 -> clangd 主动发给我们的请求（server->client），
+      必须按 LSP 规范立即应答（例如 window/workDoneProgress/create），
+      否则 clangd 会一直等这个应答、不再处理后续客户端请求，造成死锁；
+    - 不带 "id" 的通知（比如 $/progress、publishDiagnostics）-> 放入 notify_q。
     """
     while True:
         header_lines = []
@@ -95,10 +117,23 @@ def lsp_read_responses(proc: subprocess.Popen, resp_q: "queue.Queue", notify_q: 
             msg = json.loads(body.decode("utf-8"))
         except Exception:
             continue
-        if "id" in msg:
+
+        if "id" not in msg:
+            notify_q.put(msg)
+            continue
+
+        mid = msg.get("id")
+        if pending_ids is None or pending_lock is None:
+            # 无会话上下文时保持旧行为：一律当响应
+            resp_q.put(msg)
+            continue
+        with pending_lock:
+            is_response = mid in pending_ids
+        if is_response:
             resp_q.put(msg)
         else:
-            notify_q.put(msg)
+            logger.debug("[clangd->client request] method=%s id=%s -> reply null", msg.get("method"), mid)
+            lsp_send(proc, {"jsonrpc": "2.0", "id": mid, "result": None}, lock=send_lock)
 
 
 def lsp_drain_stderr(proc: subprocess.Popen):
@@ -137,28 +172,48 @@ def build_text_document_didOpen(text: str, file_path: str | Path):
     }
 
 
-def lsp_request(proc: subprocess.Popen, resp_q: "queue.Queue", msg: dict, timeout=1000):
+def lsp_request(
+    proc: subprocess.Popen,
+    resp_q: "queue.Queue",
+    msg: dict,
+    timeout=1000,
+    pending_ids: set | None = None,
+    pending_lock: threading.Lock | None = None,
+    send_lock: threading.Lock | None = None,
+):
     """
     发送 LSP 请求并等待响应
     :param proc: clangd 进程对象
     :param resp_q: 响应队列
     :param msg: LSP 请求消息
-    :param timeout: 超时时间（毫秒）
+    :param timeout: 超时时间（秒）
+    :param pending_ids: 本会话当前已发出、等待响应的请求 id 集合，reader 线程据此
+                        区分"响应"与"server->client 请求"
+    :param pending_lock: pending_ids 的锁
+    :param send_lock: 写 stdin 的锁
     :return: LSP 响应消息
     """
     req_id = msg["id"]
-    lsp_send(proc, msg)
-    t0 = time.time()
-    while True:
-        if time.time() - t0 > timeout:
-            raise TimeoutError(f"LSP request id={req_id} timeout")
-        try:
-            r = resp_q.get(timeout=0.1)
-        except queue.Empty:
-            continue
-        if r.get("id") == req_id:
-            return r
-        # 理论上 resp_q 里只会有 id 对应的响应，这里兜底忽略不匹配的
+    if pending_ids is not None and pending_lock is not None:
+        with pending_lock:
+            pending_ids.add(req_id)
+    try:
+        lsp_send(proc, msg, lock=send_lock)
+        t0 = time.time()
+        while True:
+            if time.time() - t0 > timeout:
+                raise TimeoutError(f"LSP request id={req_id} timeout")
+            try:
+                r = resp_q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if r.get("id") == req_id:
+                return r
+            # 理论上 resp_q 里只会有本会话 id 对应的响应，这里兜底忽略不匹配的
+    finally:
+        if pending_ids is not None and pending_lock is not None:
+            with pending_lock:
+                pending_ids.discard(req_id)
 
 
 def wait_for_background_index(
@@ -166,6 +221,7 @@ def wait_for_background_index(
     idle_timeout: float = 20.0,
     overall_timeout: float = 3600.0,
     first_message_timeout: float = 30.0,
+    poll_interval: float = 0.2,
 ):
     """
     等待 clangd 后台索引完成，再返回。
@@ -178,30 +234,38 @@ def wait_for_background_index(
          说明 clangd 不会发进度通知（版本不支持，或索引早已建好磁盘缓存、
          这次启动无事可做），直接放弃等待、马上去查询，避免死等到
          overall_timeout。
+
+    注意：所有时间判断都使用"进入循环迭代时"的新鲜 now，且 first_message_timeout
+    不再依赖 queue.Empty 分支触发。旧实现把 now 取在 notify_q.get(timeout=idle_timeout)
+    阻塞之前，导致 first_message_timeout 被滞后整整一个 idle_timeout（30s 变 60s）；
+    且非 $/progress 通知不断时永不进入 Empty 分支、只能等 overall_timeout（1 小时）。
     """
     seen_progress = False
     active_tokens = set()
     t_start = time.time()
+    last_progress = None
 
     while True:
         now = time.time()
+
         if now - t_start > overall_timeout:
             logger.warning("等待后台索引完成超过 overall_timeout=%ss，放弃等待，直接继续查询", overall_timeout)
             return False
 
+        if not seen_progress and now - t_start > first_message_timeout:
+            logger.warning(
+                "等待 %ss 仍未收到任何 $/progress 索引通知，不再等待，直接继续查询",
+                first_message_timeout,
+            )
+            return True
+
+        if seen_progress and last_progress is not None and now - last_progress > idle_timeout:
+            logger.info("索引通知已静默 %ss，认为后台索引已完成（或已停滞）", idle_timeout)
+            return True
+
         try:
-            msg = notify_q.get(timeout=idle_timeout)
+            msg = notify_q.get(timeout=poll_interval)
         except queue.Empty:
-            if seen_progress:
-                logger.info("索引通知已静默 %ss，认为后台索引已完成（或已停滞）", idle_timeout)
-                return True
-            if now - t_start > first_message_timeout:
-                logger.warning(
-                    "等待 %ss 仍未收到任何 $/progress 索引通知，"
-                    "不再等待，直接继续查询",
-                    first_message_timeout,
-                )
-                return True
             continue
 
         method = msg.get("method")
@@ -216,6 +280,7 @@ def wait_for_background_index(
         percentage = value.get("percentage")
 
         seen_progress = True
+        last_progress = time.time()
         logger.info("[index progress] token=%s kind=%s title=%s pct=%s", token, kind, title, percentage)
 
         if kind == "begin":
@@ -262,9 +327,23 @@ class ClangdSession:
         self.resp_q: "queue.Queue" = queue.Queue()
         # LSP 通知队列
         self.notify_q: "queue.Queue" = queue.Queue()
+        # 写 stdin 的锁：主线程发请求与 reader 线程应答 server->client 请求会并发写
+        self._write_lock = threading.Lock()
+        # 当前已发出、等待响应的请求 id 集合（reader 据此区分响应与 server->client 请求）
+        self._pending_ids: set = set()
+        self._pending_lock = threading.Lock()
         # LSP 响应读取线程
         self.reader = threading.Thread(
-            target=lsp_read_responses, args=(self.proc, self.resp_q, self.notify_q), daemon=True
+            target=lsp_read_responses,
+            args=(
+                self.proc,
+                self.resp_q,
+                self.notify_q,
+                self._pending_ids,
+                self._pending_lock,
+                self._write_lock,
+            ),
+            daemon=True,
         )
         self.reader.start()
         # LSP 进程stderr读取线程
@@ -314,8 +393,20 @@ class ClangdSession:
                 },
             },
         }
-        lsp_request(self.proc, self.resp_q, init_req, timeout=60)
-        lsp_send(self.proc, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        lsp_request(
+            self.proc,
+            self.resp_q,
+            init_req,
+            timeout=60,
+            pending_ids=self._pending_ids,
+            pending_lock=self._pending_lock,
+            send_lock=self._write_lock,
+        )
+        lsp_send(
+            self.proc,
+            {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+            lock=self._write_lock,
+        )
 
     def is_alive(self) -> bool:
         """
@@ -358,7 +449,7 @@ class ClangdSession:
             return
         with open(target_file, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
-        lsp_send(self.proc, build_text_document_didOpen(text, target_file))
+        lsp_send(self.proc, build_text_document_didOpen(text, target_file), lock=self._write_lock)
         self._opened_files.add(target_file)
 
     def find_references(
@@ -394,7 +485,15 @@ class ClangdSession:
                 "context": {"includeDeclaration": include_declaration},
             },
         }
-        refs_resp = lsp_request(self.proc, self.resp_q, refs_req, timeout=request_timeout)
+        refs_resp = lsp_request(
+            self.proc,
+            self.resp_q,
+            refs_req,
+            timeout=request_timeout,
+            pending_ids=self._pending_ids,
+            pending_lock=self._pending_lock,
+            send_lock=self._write_lock,
+        )
 
         result = refs_resp.get("result")
         locations = result or []
