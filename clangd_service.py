@@ -165,9 +165,7 @@ class ClangdService:
         with self._lock:
             # didOpen (仅首次)
             if file_uri not in self._opened_files:
-                with open(target_file, "r", encoding="utf-8", errors="replace") as f:
-                    text = f.read()
-                did_open = build_text_document_didOpen(text, target_file)
+                did_open = build_text_document_didOpen(target_file)
                 lsp_send(self.proc, did_open)
                 self._opened_files.add(file_uri)
 

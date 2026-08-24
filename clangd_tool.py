@@ -20,6 +20,7 @@ Clangd_EXE = r"c:\msys64\mingw64\bin\clangd.exe"
 # 路径 / URI 互转
 # ============================================================
 
+
 def path_to_file_uri(path: str | Path) -> str:
     """
     磁盘路径转换为链接路径
@@ -52,7 +53,8 @@ def file_url_to_path(url: str) -> Path:
 # LSP 底层收发
 # ============================================================
 
-def lsp_send(proc, msg: dict, lock=None):
+
+def lsp_send(proc: subprocess.Popen, msg: dict, lock: threading.Lock | None = None):
     """
     发送 LSP 消息
     :param proc: clangd 进程对象
@@ -76,7 +78,7 @@ def lsp_send(proc, msg: dict, lock=None):
 
 
 def lsp_read_responses(
-    proc: subprocess.Popen,
+    clangd_proc: subprocess.Popen,
     resp_q: "queue.Queue",
     notify_q: "queue.Queue",
     pending_ids: set | None = None,
@@ -92,25 +94,36 @@ def lsp_read_responses(
       必须按 LSP 规范立即应答（例如 window/workDoneProgress/create），
       否则 clangd 会一直等这个应答、不再处理后续客户端请求，造成死锁；
     - 不带 "id" 的通知（比如 $/progress、publishDiagnostics）-> 放入 notify_q。
+
+    :param clangd_proc: clangd 进程对象
+    :param resp_q: 响应队列，用于存储对我们的请求的响应
+    :param notify_q: 通知队列，用于存储 clangd 主动发给我们的请求（server->client）
+    :param pending_ids: 已发送请求的 id 集合，用于判断是否为对我们的请求
+    :param pending_lock: 用于保护 pending_ids 的锁
+    :param send_lock: 用于保护 stdin 的锁，避免并发写 stdin，导致消息头/体交错
     """
     while True:
+        # 解析头部
         header_lines = []
-        line = b""
         while True:
-            line = proc.stdout.readline()
+            line = clangd_proc.stdout.readline()
             if not line:
                 return
             if line in (b"\r\n", b"\n"):
                 break
             header_lines.append(line)
         content_length = None
+
+        # 解析头部的长度
         for hl in header_lines:
             s = hl.decode("ascii", errors="ignore").strip()
             if s.lower().startswith("content-length:"):
                 content_length = int(s.split(":")[1].strip())
         if content_length is None:
             continue
-        body = proc.stdout.read(content_length)
+
+        # 读取并解析消息体
+        body = clangd_proc.stdout.read(content_length)
         if not body:
             continue
         try:
@@ -118,6 +131,7 @@ def lsp_read_responses(
         except Exception:
             continue
 
+        # 消息分类入队
         if "id" not in msg:
             notify_q.put(msg)
             continue
@@ -132,32 +146,50 @@ def lsp_read_responses(
         if is_response:
             resp_q.put(msg)
         else:
-            logger.debug("[clangd->client request] method=%s id=%s -> reply null", msg.get("method"), mid)
-            lsp_send(proc, {"jsonrpc": "2.0", "id": mid, "result": None}, lock=send_lock)
+            logger.debug(
+                "[clangd->client request] method=%s id=%s -> reply null",
+                msg.get("method"),
+                mid,
+            )
+            lsp_send(
+                clangd_proc,
+                {"jsonrpc": "2.0", "id": mid, "result": None},
+                lock=send_lock,
+            )
 
 
-def lsp_drain_stderr(proc: subprocess.Popen):
+def lsp_drain_stderr(clangd_proc: subprocess.Popen):
     """
     持续读取并丢弃/记录 stderr。
     不消费 stderr 会导致管道缓冲区写满、clangd 阻塞在写日志上，
     进而 stdout 也不再产生响应，表现为"卡住直到超时"。
     """
+
     try:
-        for raw_line in iter(proc.stderr.readline, b""):
+        i = 0
+        for raw_line in iter(clangd_proc.stderr.readline, b""):
             if not raw_line:
                 break
-            logger.debug("[clangd stderr] %s", raw_line.decode(errors="ignore").rstrip())
+            i = (i + 1) % 1000
+            if i == 1:
+                logger.debug(
+                    "[clangd stderr] %s", raw_line.decode(errors="ignore").rstrip()
+                )
     except Exception:
         pass
 
 
-def build_text_document_didOpen(text: str, file_path: str | Path):
+def build_text_document_didOpen(file_path: str | Path, file_content: str | None = None):
     """
     构建 textDocument/didOpen 请求消息
-    :param text: 文本内容
     :param file_path: 文件路径
+    :param file_content: 文件内容，若为 None 则从文件读取
     :return: textDocument/didOpen 请求消息
     """
+    if not file_content:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            file_content = f.read()
+
     return {
         "jsonrpc": "2.0",
         "method": "textDocument/didOpen",
@@ -166,7 +198,7 @@ def build_text_document_didOpen(text: str, file_path: str | Path):
                 "uri": path_to_file_uri(file_path),
                 "languageId": "cpp",
                 "version": 1,
-                "text": text,
+                "text": file_content,
             }
         },
     }
@@ -176,7 +208,7 @@ def lsp_request(
     proc: subprocess.Popen,
     resp_q: "queue.Queue",
     msg: dict,
-    timeout=1000,
+    timeout: float = 1000.0,
     pending_ids: set | None = None,
     pending_lock: threading.Lock | None = None,
     send_lock: threading.Lock | None = None,
@@ -197,6 +229,9 @@ def lsp_request(
     if pending_ids is not None and pending_lock is not None:
         with pending_lock:
             pending_ids.add(req_id)
+    elif pending_ids:
+        pending_ids.add(req_id)
+
     try:
         lsp_send(proc, msg, lock=send_lock)
         t0 = time.time()
@@ -214,6 +249,8 @@ def lsp_request(
         if pending_ids is not None and pending_lock is not None:
             with pending_lock:
                 pending_ids.discard(req_id)
+        elif pending_ids:
+            pending_ids.discard(req_id)
 
 
 def wait_for_background_index(
@@ -249,7 +286,10 @@ def wait_for_background_index(
         now = time.time()
 
         if now - t_start > overall_timeout:
-            logger.warning("等待后台索引完成超过 overall_timeout=%ss，放弃等待，直接继续查询", overall_timeout)
+            logger.warning(
+                "等待后台索引完成超过 overall_timeout=%ss，放弃等待，直接继续查询",
+                overall_timeout,
+            )
             return False
 
         if not seen_progress and now - t_start > first_message_timeout:
@@ -259,8 +299,14 @@ def wait_for_background_index(
             )
             return True
 
-        if seen_progress and last_progress is not None and now - last_progress > idle_timeout:
-            logger.info("索引通知已静默 %ss，认为后台索引已完成（或已停滞）", idle_timeout)
+        if (
+            seen_progress
+            and last_progress is not None
+            and now - last_progress > idle_timeout
+        ):
+            logger.info(
+                "索引通知已静默 %ss，认为后台索引已完成（或已停滞）", idle_timeout
+            )
             return True
 
         try:
@@ -281,7 +327,13 @@ def wait_for_background_index(
 
         seen_progress = True
         last_progress = time.time()
-        logger.info("[index progress] token=%s kind=%s title=%s pct=%s", token, kind, title, percentage)
+        logger.info(
+            "[index progress] token=%s kind=%s title=%s pct=%s",
+            token,
+            kind,
+            title,
+            percentage,
+        )
 
         if kind == "begin":
             active_tokens.add(token)
@@ -304,8 +356,14 @@ def wait_for_background_index(
 #     后续同一个 session 上的所有查询都会直接跳过等待。
 # ============================================================
 
+
 class ClangdSession:
-    def __init__(self, project_dir: str | Path, compile_dir: str | Path, clangd_exe: str = Clangd_EXE):
+    def __init__(
+        self,
+        project_dir: str | Path,
+        compile_dir: str | Path,
+        clangd_exe: str = Clangd_EXE,
+    ):
         self.project_dir = Path(project_dir).absolute().as_posix()
         self.compile_dir = Path(compile_dir).absolute().as_posix()
         self.clangd_exe = clangd_exe
@@ -426,7 +484,9 @@ class ClangdSession:
         """
         with self._index_ready_lock:
             if self._index_ready:
-                logger.info("索引在本会话（pid=%s）中已确认完成，跳过等待", self.proc.pid)
+                logger.info(
+                    "索引在本会话（pid=%s）中已确认完成，跳过等待", self.proc.pid
+                )
                 return True
             finished = wait_for_background_index(
                 self.notify_q,
@@ -441,15 +501,15 @@ class ClangdSession:
 
     def open_file(self, target_file: str | Path):
         """
-        打开文件并发送 textDocument/didOpen 通知
+        通知clangd已经打开文件 target_file
         :param target_file: 文件路径
         """
         target_file = Path(target_file).absolute().as_posix()
         if target_file in self._opened_files:
             return
-        with open(target_file, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
-        lsp_send(self.proc, build_text_document_didOpen(text, target_file), lock=self._write_lock)
+        lsp_send(
+            self.proc, build_text_document_didOpen(target_file), lock=self._write_lock
+        )
         self._opened_files.add(target_file)
 
     def find_references(
@@ -532,7 +592,11 @@ def _session_key(project_dir, compile_dir, clangd_exe) -> str:
     )
 
 
-def get_session(project_dir: str | Path, compile_dir: str | Path, clangd_exe: str = Clangd_EXE,) -> ClangdSession:
+def get_session(
+    project_dir: str | Path,
+    compile_dir: str | Path,
+    clangd_exe: str = Clangd_EXE,
+) -> ClangdSession:
     """
     获取一个 clangd 会话
     :param project_dir: 项目目录
@@ -545,7 +609,9 @@ def get_session(project_dir: str | Path, compile_dir: str | Path, clangd_exe: st
         session = _SESSIONS.get(key)
         if session is None or not session.is_alive():
             if session is not None:
-                logger.warning("旧的 clangd 会话(pid=%s)已退出，重新启动一个", session.proc.pid)
+                logger.warning(
+                    "旧的 clangd 会话(pid=%s)已退出，重新启动一个", session.proc.pid
+                )
             session = ClangdSession(project_dir, compile_dir, clangd_exe)
             _SESSIONS[key] = session
         return session
@@ -567,6 +633,7 @@ atexit.register(close_all_sessions)
 # ============================================================
 # 对外接口：函数签名保持不变，内部改为复用长驻 session
 # ============================================================
+
 
 @elapse
 def find_references(
@@ -632,14 +699,14 @@ def kill_all_clangd_processes():
         pass
 
 
-def get_ref_code(ref_code_locaitons: list[dict]) -> list[str]:
+def get_ref_code(ref_code_locations: list[dict]) -> list[str]:
     """
     从定位的引用位置中提取代码行
-    :param ref_code_locaitons: 引用位置列表，每个元素是一个字典，包含 uri 和 start 字段
+    :param ref_code_locations: 引用位置列表，每个元素是一个字典，包含 uri 和 start 字段
     :return: 代码行列表
     """
     res = []
-    for loc in ref_code_locaitons:
+    for loc in ref_code_locations:
         uri = loc["uri"]
         file_path = file_url_to_path(uri)
         start_line = loc["start"].get("line", "")
@@ -693,4 +760,3 @@ if __name__ == "__main__":
         print(x["uri"], x["start"].get("line"), x["start"].get("character"))
 
     close_all_sessions()
-
