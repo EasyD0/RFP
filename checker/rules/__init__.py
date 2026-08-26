@@ -9,5 +9,13 @@ from .rule_57s import Checker_57S
 from .rule_1x import Checker_1X
 from .rule_47s import Checker_47S
 from .rule_36s import Checker_36S
+from .rule_132s import Checker_132S
 
-__all__ = ["Checker_69D", "Checker_57S", "Checker_1X", "Checker_47S", "Checker_36S"]
+__all__ = [
+    "Checker_69D",
+    "Checker_57S",
+    "Checker_1X",
+    "Checker_47S",
+    "Checker_36S",
+    "Checker_132S",
+]
