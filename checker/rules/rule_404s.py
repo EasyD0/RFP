@@ -39,7 +39,7 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
     :params begin_line: 数组定义的起始行号,行号从 1 开始计数
     :return: 从起始行到语句结束(含分号)的完整源码文本
     """
-    lines = file.read_text(encoding='utf-8').splitlines(keepends=True)
+    lines = file.read_text(encoding='utf-8', errors='replace').splitlines(keepends=True)
 
     if not (1 <= begin_line <= len(lines)):
         raise ValueError(f"begin_line={begin_line} 超出文件行数范围(共 {len(lines)} 行)")
@@ -271,10 +271,17 @@ def get_the_array_size(array_decl: str) -> list[int]:
     """
     从数组声明的文本中获取数组的每个维度的大小
     例如从"typeA arr[3][4][5] = {" 中获取 [3,4,5]
+    只在 = / ; 之前的声明部分里查找, 避免把初始化列表里的 [n]
+    (如 designated initializer {[2]=1}) 误算进维度
     """
+    decl_part = array_decl
+    for i, c in enumerate(array_decl):
+        if c in {'=', ';'}:
+            decl_part = array_decl[:i]
+            break
     sizes = []
     pattern = re.compile(r'\[(\d+)\]')
-    for match in pattern.finditer(array_decl):
+    for match in pattern.finditer(decl_part):
         sizes.append(int(match.group(1)))
     return sizes
 
@@ -435,6 +442,48 @@ def find_file_in_include_options(file: str, compile_args: list[str], proj_dir: P
     return None
 
 
+def resolve_include_file(name: str, code_file_dir: Path, compile_args: list[str], proj_dir: Path) -> Path | None:
+    """
+    解析一个 #include 的文件名, 返回找到的文件的绝对路径, 找不到返回 None
+    引号形式先相对当前源文件所在目录查找, 再按 工程根目录 / -I 目录查找
+    """
+    candidate = code_file_dir / name
+    if candidate.is_file():
+        return candidate.resolve()
+    return find_file_in_include_options(name, compile_args, proj_dir)
+
+
+def expand_include_directives(code: str, code_file_dir: Path, compile_args: list[str], proj_dir: Path) -> str:
+    """
+    把代码里的 #include 指令行原位替换为对应头文件的内容(已去注释),
+    其余行原样保留。找不到的头文件替换为空行。
+    这样初始化列表文本 = 语句自身的内容 + 各头文件的内容, 边界处不会丢逗号。
+    """
+    pattern = re.compile(r'^[ \t]*#[ \t]*include[ \t]+(?:"([^"]+)"|<([^>]+)>)')
+
+    out: list[str] = []
+    for line in code.splitlines(keepends=True):
+        m = pattern.match(line)
+        if not m:
+            out.append(line)
+            continue
+
+        name = m.group(1) or m.group(2)
+        inc_path = resolve_include_file(name, code_file_dir, compile_args, proj_dir)
+        if inc_path is None:
+            logger.warning(f"找不到 #include 的文件: {name}")
+            out.append("\n")
+            continue
+
+        text = rm_c_comment(inc_path.read_text(encoding='utf-8', errors='replace'))
+        # 头文件内容若不以换行结尾, 补一个, 避免和下一行(如 "};" )拼在一起
+        if not text.endswith("\n"):
+            text += "\n"
+        out.append(text)
+
+    return "".join(out)
+
+
 logger = logSetup(__name__)
 
 
@@ -452,32 +501,49 @@ class Checker_404S(Checker):
 
         arrary_define_code = get_the_array_define_code(code_file, code_line_num)
         arrary_define_code = rm_c_comment(arrary_define_code)
-        arrary_dimention = get_the_array_dimention(arrary_define_code.split("\n")[0])
-        arrary_sizes = get_the_array_size(arrary_define_code.split("\n")[0])
+        first_line = arrary_define_code.split("\n")[0]
+        arrary_dimention = get_the_array_dimention(first_line)
+        arrary_sizes = get_the_array_size(first_line)
 
         if len(arrary_sizes) != arrary_dimention:
             logger.warning(f"数组定义的维度与大小不匹配, 可能存在宏定义等, 从文本上无法判别, 维度={arrary_dimention}, 大小={arrary_sizes}")
             return problem
 
-        include_files = get_the_sharpInc(arrary_define_code)
-
         code_file_dir = code_file.parent
-        compile_args:list[str] = code_tool.get_args(code_file) # 包含编译参数 -I 的参数列表 
+        compile_args:list[str] = code_tool.get_args(code_file) # 包含编译参数 -I 的参数列表
 
-        all_inc_file_text_list = []
-        for inc_file in include_files:
-            inc_file_path = (code_file_dir / inc_file).resolve()
-            if not inc_file_path.exists():
-                inc_file_path = find_file_in_include_options(str(inc_file), compile_args, code_tool.proj_dir)
-            if not inc_file_path or not inc_file_path.exists():
-                continue
+        # 把语句里的 #include 指令原位替换为头文件内容, 得到完整的初始化数据文本
+        init_code = expand_include_directives(
+            arrary_define_code, code_file_dir, compile_args, code_tool.proj_dir
+        )
 
-            inc_file_text = inc_file_path.read_text(encoding='utf-8')
-            inc_file_text = rm_c_comment(inc_file_text)
-            all_inc_file_text_list.append(inc_file_text)
+        # 截取初始化列表: 第一个 '{' 到与之配对的 '}'
+        start = init_code.find('{')
+        if start < 0:
+            logger.warning("数组定义语句里没有找到初始化列表 '{', 无法计算元素个数")
+            return problem
+        end = -1
+        depth = 0
+        for idx in range(start, len(init_code)):
+            c = init_code[idx]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        if end < 0:
+            logger.warning("初始化列表的花括号不配对, 无法计算元素个数")
+            return problem
 
-        all_inc_file_text = " ".join(all_inc_file_text_list)
-        init_sizes = get_the_array_initlist_dimention(all_inc_file_text, arrary_dimention)
+        # 去掉最外层花括号, 得到顶层元素的文本
+        init_text = _strip_outer_braces(init_code[start:end + 1])
+        if init_text is None:
+            logger.warning("初始化列表没有被一对完整的花括号包裹, 无法计算元素个数")
+            return problem
+
+        init_sizes = get_the_array_initlist_dimention(init_text, arrary_dimention)
         for i in range(len(init_sizes)):
             if init_sizes[i] > arrary_sizes[i]:
                 break
