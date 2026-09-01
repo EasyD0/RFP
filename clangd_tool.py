@@ -77,30 +77,52 @@ def lsp_send(proc: subprocess.Popen, msg: dict, lock: threading.Lock | None = No
             _do()
 
 
+def _read_exact(fp, n: int) -> bytes | None:
+    """
+    从流里精确读取 n 字节, 不足 n 字节(EOF)返回 None。
+
+    裸 FileIO 的 read(n) 只做一次系统调用, 管道缓冲区里有多少就返回多少,
+    大消息(如大项目的 references 响应, 可达数 MB)会被截断, 导致 LSP 流
+    错位、响应永久丢失、后续请求一直等不到响应而超时。必须循环读满为止。
+    """
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = fp.read(n - len(buf))
+        if not chunk:
+            return None
+        buf.extend(chunk)
+    return bytes(buf)
+
+
 def lsp_read_responses(
     clangd_proc: subprocess.Popen,
     resp_q: "queue.Queue",
-    notify_q: "queue.Queue",
-    pending_ids: set | None = None,
-    pending_lock: threading.Lock | None = None,
+    notify_q: "queue.Queue | None" = None,
+    resp_registry: dict | None = None,
+    registry_lock: threading.Lock | None = None,
     send_lock: threading.Lock | None = None,
 ):
     """
     读 LSP 响应 / 通知：解析 Content-Length + body
 
-    消息分三类：
-    - 带 "id" 且该 id 是我们发过请求的 id -> 对我们请求的响应，放入 resp_q；
-    - 带 "id" 但 id 不是我们发过的 -> clangd 主动发给我们的请求（server->client），
+    消息按 JSON-RPC 规范分三类：
+    - 带 "id" 且带 "method" -> clangd 主动发给我们的请求（server->client），
       必须按 LSP 规范立即应答（例如 window/workDoneProgress/create），
-      否则 clangd 会一直等这个应答、不再处理后续客户端请求，造成死锁；
+      否则 clangd 会一直等这个应答、不再处理后续客户端请求，造成死锁。
+      用 "method" 字段判别, 而不是用 pending id 集合, 避免两端 id 碰撞误判；
+    - 只带 "id" 的 -> 对我们请求的响应：
+        * resp_registry 注册表可用时, 按 id 精确投递到该请求自己的专用队列,
+          并发请求互不干扰, 也不会误丢其他请求的响应；
+        * 注册表可用但 id 不存在 -> 请求已超时移除, 迟到的响应记日志丢弃；
+        * 注册表不可用(旧调用方式) -> 放入共享的 resp_q；
     - 不带 "id" 的通知（比如 $/progress、publishDiagnostics）-> 放入 notify_q。
 
     :param clangd_proc: clangd 进程对象
-    :param resp_q: 响应队列，用于存储对我们的请求的响应
-    :param notify_q: 通知队列，用于存储 clangd 主动发给我们的请求（server->client）
-    :param pending_ids: 已发送请求的 id 集合，用于判断是否为对我们的请求
-    :param pending_lock: 用于保护 pending_ids 的锁
-    :param send_lock: 用于保护 stdin 的锁，避免并发写 stdin，导致消息头/体交错
+    :param resp_q: 共享响应队列(旧调用方式使用)
+    :param notify_q: 通知队列
+    :param resp_registry: 请求 id -> 专用响应队列 的注册表(新调用方式使用)
+    :param registry_lock: 保护 resp_registry 的锁
+    :param send_lock: 写 stdin 的锁, 应答 server->client 请求时与其他写操作互斥
     """
     while True:
         # 解析头部
@@ -122,30 +144,26 @@ def lsp_read_responses(
         if content_length is None:
             continue
 
-        # 读取并解析消息体
-        body = clangd_proc.stdout.read(content_length)
-        if not body:
-            continue
+        # 读取并解析消息体(必须读满 content_length, 见 _read_exact)
+        body = _read_exact(clangd_proc.stdout, content_length)
+        if body is None:
+            return
         try:
             msg = json.loads(body.decode("utf-8"))
         except Exception:
+            logger.debug("[clangd] 消息体 JSON 解析失败, 丢弃 %d 字节", len(body))
             continue
 
         # 消息分类入队
         if "id" not in msg:
-            notify_q.put(msg)
+            if notify_q is not None:
+                notify_q.put(msg)
             continue
 
         mid = msg.get("id")
-        if pending_ids is None or pending_lock is None:
-            # 无会话上下文时保持旧行为：一律当响应
-            resp_q.put(msg)
-            continue
-        with pending_lock:
-            is_response = mid in pending_ids
-        if is_response:
-            resp_q.put(msg)
-        else:
+
+        if "method" in msg:
+            # server->client 请求, 必须立即应答, 否则 clangd 会卡住
             logger.debug(
                 "[clangd->client request] method=%s id=%s -> reply null",
                 msg.get("method"),
@@ -156,6 +174,20 @@ def lsp_read_responses(
                 {"jsonrpc": "2.0", "id": mid, "result": None},
                 lock=send_lock,
             )
+            continue
+
+        if resp_registry is not None:
+            with registry_lock:
+                own_q = resp_registry.get(mid)
+            if own_q is not None:
+                own_q.put(msg)
+                continue
+            # 请求已超时并从注册表移除, 这是一条迟到的响应, 直接丢弃
+            logger.debug("[clangd] 迟到的响应 id=%s 已丢弃", mid)
+            continue
+
+        # 旧调用方式(无注册表): 保持旧行为, 投到共享队列
+        resp_q.put(msg)
 
 
 def lsp_drain_stderr(clangd_proc: subprocess.Popen):
@@ -212,25 +244,43 @@ def lsp_request(
     pending_ids: set | None = None,
     pending_lock: threading.Lock | None = None,
     send_lock: threading.Lock | None = None,
+    resp_registry: dict | None = None,
+    registry_lock: threading.Lock | None = None,
 ):
     """
     发送 LSP 请求并等待响应
+
+    两种等待方式：
+    - resp_registry/registry_lock 可用（推荐）：为本请求建一个专用队列注册进
+      注册表，reader 线程按 id 精确投递，并发请求互不干扰；
+    - 否则走旧的共享 resp_q + pending_ids 方式（保持对旧调用方的兼容），
+      读到不属于自己的消息时放回队列（带 id 且带 method 的 server->client
+      请求会被应答掉，不会在队列里打转）。
+
     :param proc: clangd 进程对象
-    :param resp_q: 响应队列
+    :param resp_q: 共享响应队列(旧方式)
     :param msg: LSP 请求消息
     :param timeout: 超时时间（秒）
-    :param pending_ids: 本会话当前已发出、等待响应的请求 id 集合，reader 线程据此
-                        区分"响应"与"server->client 请求"
-    :param pending_lock: pending_ids 的锁
+    :param pending_ids: 旧方式: 已发出、等待响应的请求 id 集合
+    :param pending_lock: 旧方式: pending_ids 的锁
     :param send_lock: 写 stdin 的锁
+    :param resp_registry: 新方式: 请求 id -> 专用响应队列 的注册表
+    :param registry_lock: 新方式: 保护 resp_registry 的锁
     :return: LSP 响应消息
     """
     req_id = msg["id"]
-    if pending_ids is not None and pending_lock is not None:
-        with pending_lock:
+
+    own_q: "queue.Queue | None" = None
+    if resp_registry is not None and registry_lock is not None:
+        own_q = queue.Queue()
+        with registry_lock:
+            resp_registry[req_id] = own_q
+    else:
+        if pending_ids is not None and pending_lock is not None:
+            with pending_lock:
+                pending_ids.add(req_id)
+        elif pending_ids:
             pending_ids.add(req_id)
-    elif pending_ids:
-        pending_ids.add(req_id)
 
     try:
         lsp_send(proc, msg, lock=send_lock)
@@ -239,18 +289,34 @@ def lsp_request(
             if time.time() - t0 > timeout:
                 raise TimeoutError(f"LSP request id={req_id} timeout")
             try:
-                r = resp_q.get(timeout=0.1)
+                r = (own_q or resp_q).get(timeout=0.1)
             except queue.Empty:
                 continue
             if r.get("id") == req_id:
                 return r
-            # 理论上 resp_q 里只会有本会话 id 对应的响应，这里兜底忽略不匹配的
+            if "method" in r:
+                # 旧共享队列路径混进来的 server->client 请求: 应答掉, 不能
+                # 放回去(否则 clangd 一直等应答), 也不能当作响应
+                lsp_send(
+                    proc,
+                    {"jsonrpc": "2.0", "id": r.get("id"), "result": None},
+                    lock=send_lock,
+                )
+                continue
+            # 别的请求的响应: 放回队尾让对应的等待者取走; 稍作让步避免
+            # 队列里只有无主消息时空转
+            time.sleep(0.05)
+            resp_q.put(r)
     finally:
-        if pending_ids is not None and pending_lock is not None:
-            with pending_lock:
+        if own_q is not None:
+            with registry_lock:
+                resp_registry.pop(req_id, None)
+        else:
+            if pending_ids is not None and pending_lock is not None:
+                with pending_lock:
+                    pending_ids.discard(req_id)
+            elif pending_ids:
                 pending_ids.discard(req_id)
-        elif pending_ids:
-            pending_ids.discard(req_id)
 
 
 def wait_for_background_index(
@@ -378,7 +444,6 @@ class ClangdSession:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            bufsize=0,
         )
 
         # LSP 响应队列
@@ -387,9 +452,10 @@ class ClangdSession:
         self.notify_q: "queue.Queue" = queue.Queue()
         # 写 stdin 的锁：主线程发请求与 reader 线程应答 server->client 请求会并发写
         self._write_lock = threading.Lock()
-        # 当前已发出、等待响应的请求 id 集合（reader 据此区分响应与 server->client 请求）
-        self._pending_ids: set = set()
-        self._pending_lock = threading.Lock()
+        # 响应注册表: 请求 id -> 该请求专用的响应队列。reader 线程按 id 精确
+        # 投递, 并发请求互不干扰, 也不会误丢其他请求的响应。
+        self._resp_registry: dict = {}
+        self._registry_lock = threading.Lock()
         # LSP 响应读取线程
         self.reader = threading.Thread(
             target=lsp_read_responses,
@@ -397,8 +463,8 @@ class ClangdSession:
                 self.proc,
                 self.resp_q,
                 self.notify_q,
-                self._pending_ids,
-                self._pending_lock,
+                self._resp_registry,
+                self._registry_lock,
                 self._write_lock,
             ),
             daemon=True,
@@ -424,19 +490,22 @@ class ClangdSession:
         # 初始化 clangd 会话, 发送 initialize 请求和 initialized 通知, 让它立即开始索引代码
         self._initialize()
 
-    def _alloc_id(self) -> int:
+    def _alloc_id(self) -> str:
         """
-        分配一个唯一的请求ID
+        分配一个唯一的请求ID。
+        用带前缀的字符串, 与 clangd 发来的 server->client 请求的整数 id
+        处于不同命名空间, 永远不会碰撞。
         :return: 唯一的请求ID
         """
         with self._id_lock:
             self._next_id += 1
-            return self._next_id
+            return f"pyclient-{self._next_id}"
 
     def _initialize(self):
+        init_id = self._alloc_id()
         init_req = {
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": init_id,
             "method": "initialize",
             "params": {
                 "processId": None,
@@ -456,8 +525,8 @@ class ClangdSession:
             self.resp_q,
             init_req,
             timeout=60,
-            pending_ids=self._pending_ids,
-            pending_lock=self._pending_lock,
+            resp_registry=self._resp_registry,
+            registry_lock=self._registry_lock,
             send_lock=self._write_lock,
         )
         lsp_send(
@@ -550,8 +619,8 @@ class ClangdSession:
             self.resp_q,
             refs_req,
             timeout=request_timeout,
-            pending_ids=self._pending_ids,
-            pending_lock=self._pending_lock,
+            resp_registry=self._resp_registry,
+            registry_lock=self._registry_lock,
             send_lock=self._write_lock,
         )
 
