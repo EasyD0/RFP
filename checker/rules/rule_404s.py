@@ -22,7 +22,6 @@ from ..base import (
     common_method,
     register_checker,
     tag_padding,
-    
 )
 
 
@@ -39,10 +38,12 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
     :params begin_line: 数组定义的起始行号,行号从 1 开始计数
     :return: 从起始行到语句结束(含分号)的完整源码文本
     """
-    lines = file.read_text(encoding='utf-8', errors='replace').splitlines(keepends=True)
+    lines = file.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
 
     if not (1 <= begin_line <= len(lines)):
-        raise ValueError(f"begin_line={begin_line} 超出文件行数范围(共 {len(lines)} 行)")
+        raise ValueError(
+            f"begin_line={begin_line} 超出文件行数范围(共 {len(lines)} 行)"
+        )
 
     STATE_NORMAL = 0
     STATE_STRING = 1
@@ -64,14 +65,14 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
 
         while i < n:
             c = line[i]
-            nxt = line[i + 1] if i + 1 < n else ''
+            nxt = line[i + 1] if i + 1 < n else ""
 
             if state == STATE_NORMAL:
-                if c == '/' and nxt == '/':
+                if c == "/" and nxt == "/":
                     state = STATE_LINE_COMMENT
                     i += 2
                     continue
-                elif c == '/' and nxt == '*':
+                elif c == "/" and nxt == "*":
                     state = STATE_BLOCK_COMMENT
                     i += 2
                     continue
@@ -83,15 +84,15 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
                     state = STATE_CHAR
                     i += 1
                     continue
-                elif c == '{':
+                elif c == "{":
                     brace_depth += 1
                     i += 1
                     continue
-                elif c == '}':
+                elif c == "}":
                     brace_depth -= 1
                     i += 1
                     continue
-                elif c == ';' and brace_depth == 0:
+                elif c == ";" and brace_depth == 0:
                     finished = True
                     i += 1
                     break
@@ -100,7 +101,7 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
                     continue
 
             elif state == STATE_STRING:
-                if c == '\\' and i + 1 < n:
+                if c == "\\" and i + 1 < n:
                     i += 2
                     continue
                 elif c == '"':
@@ -109,7 +110,7 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
                 continue
 
             elif state == STATE_CHAR:
-                if c == '\\' and i + 1 < n:
+                if c == "\\" and i + 1 < n:
                     i += 2
                     continue
                 elif c == "'":
@@ -122,7 +123,7 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
                 continue
 
             elif state == STATE_BLOCK_COMMENT:
-                if c == '*' and nxt == '/':
+                if c == "*" and nxt == "/":
                     state = STATE_NORMAL
                     i += 2
                     continue
@@ -137,7 +138,8 @@ def get_the_array_define_code(file: Path, begin_line: int) -> str:
         if finished:
             break
 
-    return ''.join(collected)
+    return "".join(collected)
+
 
 def rm_c_comment(code: str) -> str:
     """
@@ -148,25 +150,25 @@ def rm_c_comment(code: str) -> str:
     result = []
     i = 0
     n = len(code)
- 
+
     STATE_NORMAL = 0
     STATE_STRING = 1
     STATE_CHAR = 2
     STATE_LINE_COMMENT = 3
     STATE_BLOCK_COMMENT = 4
- 
+
     state = STATE_NORMAL
- 
+
     while i < n:
         c = code[i]
-        nxt = code[i + 1] if i + 1 < n else ''
- 
+        nxt = code[i + 1] if i + 1 < n else ""
+
         if state == STATE_NORMAL:
-            if c == '/' and nxt == '/':
+            if c == "/" and nxt == "/":
                 state = STATE_LINE_COMMENT
                 i += 2
                 continue
-            elif c == '/' and nxt == '*':
+            elif c == "/" and nxt == "*":
                 state = STATE_BLOCK_COMMENT
                 i += 2
                 continue
@@ -184,10 +186,10 @@ def rm_c_comment(code: str) -> str:
                 result.append(c)
                 i += 1
                 continue
- 
+
         elif state == STATE_STRING:
             result.append(c)
-            if c == '\\' and i + 1 < n:
+            if c == "\\" and i + 1 < n:
                 # 转义字符,连同下一个字符一起原样保留
                 result.append(nxt)
                 i += 2
@@ -196,10 +198,10 @@ def rm_c_comment(code: str) -> str:
                 state = STATE_NORMAL
             i += 1
             continue
- 
+
         elif state == STATE_CHAR:
             result.append(c)
-            if c == '\\' and i + 1 < n:
+            if c == "\\" and i + 1 < n:
                 result.append(nxt)
                 i += 2
                 continue
@@ -207,23 +209,23 @@ def rm_c_comment(code: str) -> str:
                 state = STATE_NORMAL
             i += 1
             continue
- 
+
         elif state == STATE_LINE_COMMENT:
-            if c == '\n':
+            if c == "\n":
                 # 单行注释结束于换行符,保留该换行符以维持行数
                 result.append(c)
                 state = STATE_NORMAL
             # 注释内容本身全部丢弃
             i += 1
             continue
- 
+
         elif state == STATE_BLOCK_COMMENT:
-            if c == '\n':
+            if c == "\n":
                 # 块注释内部的换行符必须保留,否则行数会变
                 result.append(c)
                 i += 1
                 continue
-            elif c == '*' and nxt == '/':
+            elif c == "*" and nxt == "/":
                 state = STATE_NORMAL
                 i += 2
                 continue
@@ -231,8 +233,9 @@ def rm_c_comment(code: str) -> str:
                 # 块注释内的其他字符直接丢弃
                 i += 1
                 continue
- 
-    return ''.join(result)
+
+    return "".join(result)
+
 
 def get_the_sharpInc(s: str) -> list[Path]:
     """
@@ -243,8 +246,7 @@ def get_the_sharpInc(s: str) -> list[Path]:
     # 允许 # 前有空白(预处理指令允许缩进),#和include之间也允许空白
     # 匹配 "xxx.h" 或 <xxx.h> 两种形式
     pattern = re.compile(
-        r'^[ \t]*#[ \t]*include[ \t]+(?:"([^"]+)"|<([^>]+)>)',
-        re.MULTILINE
+        r'^[ \t]*#[ \t]*include[ \t]+(?:"([^"]+)"|<([^>]+)>)', re.MULTILINE
     )
 
     result = []
@@ -253,19 +255,21 @@ def get_the_sharpInc(s: str) -> list[Path]:
         result.append(Path(name))
     return result
 
-def get_the_array_dimention(arrary_decl:str):
+
+def get_the_array_dimention(arrary_decl: str):
     """
     从数组声明的文本中获取数组的维度
     例如从"typeA arr[3][4][5] = {" 中获取维度 3
     """
     # 不考虑类型别名的情况
-    res = 0;
+    res = 0
     for c in arrary_decl:
         if c == "[":
             res += 1
         if c in {"=", ";", ",", "{"}:
             break
     return res
+
 
 def get_the_array_size(array_decl: str) -> list[int]:
     """
@@ -276,14 +280,15 @@ def get_the_array_size(array_decl: str) -> list[int]:
     """
     decl_part = array_decl
     for i, c in enumerate(array_decl):
-        if c in {'=', ';'}:
+        if c in {"=", ";"}:
             decl_part = array_decl[:i]
             break
     sizes = []
-    pattern = re.compile(r'\[(\d+)\]')
+    pattern = re.compile(r"\[(\d+)\]")
     for match in pattern.finditer(decl_part):
         sizes.append(int(match.group(1)))
     return sizes
+
 
 def _split_top_level(text: str) -> list[str]:
     """按花括号深度为 0 处的逗号切分,同时跳过字符串/字符字面量内部的逗号和花括号"""
@@ -307,18 +312,18 @@ def _split_top_level(text: str) -> list[str]:
                 current.append(c)
                 i += 1
                 continue
-            elif c == '{':
+            elif c == "{":
                 depth += 1
                 current.append(c)
                 i += 1
                 continue
-            elif c == '}':
+            elif c == "}":
                 depth -= 1
                 current.append(c)
                 i += 1
                 continue
-            elif c == ',' and depth == 0:
-                elements.append(''.join(current))
+            elif c == "," and depth == 0:
+                elements.append("".join(current))
                 current = []
                 i += 1
                 continue
@@ -328,7 +333,7 @@ def _split_top_level(text: str) -> list[str]:
                 continue
         elif state == STATE_STRING:
             current.append(c)
-            if c == '\\' and i + 1 < n:
+            if c == "\\" and i + 1 < n:
                 current.append(text[i + 1])
                 i += 2
                 continue
@@ -338,7 +343,7 @@ def _split_top_level(text: str) -> list[str]:
             continue
         elif state == STATE_CHAR:
             current.append(c)
-            if c == '\\' and i + 1 < n:
+            if c == "\\" and i + 1 < n:
                 current.append(text[i + 1])
                 i += 2
                 continue
@@ -347,20 +352,20 @@ def _split_top_level(text: str) -> list[str]:
             i += 1
             continue
 
-    elements.append(''.join(current))
-    return [e.strip() for e in elements if e.strip() != '']
+    elements.append("".join(current))
+    return [e.strip() for e in elements if e.strip() != ""]
 
 
 def _strip_outer_braces(s: str) -> str | None:
     """如果 s 整体被一对花括号完整包裹,返回内部内容;否则返回 None"""
     s = s.strip()
-    if not (s.startswith('{') and s.endswith('}')):
+    if not (s.startswith("{") and s.endswith("}")):
         return None
     depth = 0
     for idx, c in enumerate(s):
-        if c == '{':
+        if c == "{":
             depth += 1
-        elif c == '}':
+        elif c == "}":
             depth -= 1
             if depth == 0 and idx != len(s) - 1:
                 return None
@@ -393,7 +398,10 @@ def get_the_array_initlist_dimention(arrary_initlist: str, dimention: int) -> li
 
     return result
 
-def find_file_in_include_options(file: str, compile_args: list[str], proj_dir: Path) -> Path | None:
+
+def find_file_in_include_options(
+    file: str, compile_args: list[str], proj_dir: Path
+) -> Path | None:
     """
     file: 是 include 后的文件, 可能是相对路径, 可能是文件名
     compile_args: 是编译参数列表, 含有 -I 路径
@@ -412,13 +420,13 @@ def find_file_in_include_options(file: str, compile_args: list[str], proj_dir: P
     n = len(compile_args)
     while i < n:
         arg = compile_args[i]
-        if arg == '-I':
+        if arg == "-I":
             # 分开写: -I path
             if i + 1 < n:
                 include_dirs.append(Path(compile_args[i + 1]))
                 i += 2
                 continue
-        elif arg.startswith('-I') and len(arg) > 2:
+        elif arg.startswith("-I") and len(arg) > 2:
             # 连写: -Ipath
             include_dirs.append(Path(arg[2:]))
         i += 1
@@ -442,7 +450,9 @@ def find_file_in_include_options(file: str, compile_args: list[str], proj_dir: P
     return None
 
 
-def resolve_include_file(name: str, code_file_dir: Path, compile_args: list[str], proj_dir: Path) -> Path | None:
+def resolve_include_file(
+    name: str, code_file_dir: Path, compile_args: list[str], proj_dir: Path
+) -> Path | None:
     """
     解析一个 #include 的文件名, 返回找到的文件的绝对路径, 找不到返回 None
     引号形式先相对当前源文件所在目录查找, 再按 工程根目录 / -I 目录查找
@@ -453,7 +463,9 @@ def resolve_include_file(name: str, code_file_dir: Path, compile_args: list[str]
     return find_file_in_include_options(name, compile_args, proj_dir)
 
 
-def expand_include_directives(code: str, code_file_dir: Path, compile_args: list[str], proj_dir: Path) -> str:
+def expand_include_directives(
+    code: str, code_file_dir: Path, compile_args: list[str], proj_dir: Path
+) -> str:
     """
     把代码里的 #include 指令行原位替换为对应头文件的内容(已去注释),
     其余行原样保留。找不到的头文件替换为空行。
@@ -475,7 +487,7 @@ def expand_include_directives(code: str, code_file_dir: Path, compile_args: list
             out.append("\n")
             continue
 
-        text = rm_c_comment(inc_path.read_text(encoding='utf-8', errors='replace'))
+        text = rm_c_comment(inc_path.read_text(encoding="utf-8", errors="replace"))
         # 头文件内容若不以换行结尾, 补一个, 避免和下一行(如 "};" )拼在一起
         if not text.endswith("\n"):
             text += "\n"
@@ -506,11 +518,15 @@ class Checker_404S(Checker):
         arrary_sizes = get_the_array_size(first_line)
 
         if len(arrary_sizes) != arrary_dimention:
-            logger.warning(f"数组定义的维度与大小不匹配, 可能存在宏定义等, 从文本上无法判别, 维度={arrary_dimention}, 大小={arrary_sizes}")
+            logger.warning(
+                f"数组定义的维度与大小不匹配, 可能存在宏定义等, 从文本上无法判别, 维度={arrary_dimention}, 大小={arrary_sizes}"
+            )
             return problem
 
         code_file_dir = code_file.parent
-        compile_args:list[str] = code_tool.get_args(code_file) # 包含编译参数 -I 的参数列表
+        compile_args: list[str] = code_tool.get_args(
+            code_file
+        )  # 包含编译参数 -I 的参数列表
 
         # 把语句里的 #include 指令原位替换为头文件内容, 得到完整的初始化数据文本
         init_code = expand_include_directives(
@@ -518,7 +534,7 @@ class Checker_404S(Checker):
         )
 
         # 截取初始化列表: 第一个 '{' 到与之配对的 '}'
-        start = init_code.find('{')
+        start = init_code.find("{")
         if start < 0:
             logger.warning("数组定义语句里没有找到初始化列表 '{', 无法计算元素个数")
             return problem
@@ -526,9 +542,9 @@ class Checker_404S(Checker):
         depth = 0
         for idx in range(start, len(init_code)):
             c = init_code[idx]
-            if c == '{':
+            if c == "{":
                 depth += 1
-            elif c == '}':
+            elif c == "}":
                 depth -= 1
                 if depth == 0:
                     end = idx
@@ -538,7 +554,7 @@ class Checker_404S(Checker):
             return problem
 
         # 去掉最外层花括号, 得到顶层元素的文本
-        init_text = _strip_outer_braces(init_code[start:end + 1])
+        init_text = _strip_outer_braces(init_code[start : end + 1])
         if init_text is None:
             logger.warning("初始化列表没有被一对完整的花括号包裹, 无法计算元素个数")
             return problem
@@ -548,11 +564,8 @@ class Checker_404S(Checker):
             if init_sizes[i] > arrary_sizes[i]:
                 break
         else:
-            problem.set_false() # 所有维度都不超过声明大小
+            problem.set_false()  # 所有维度都不超过声明大小
         return problem
-
-
-
 
     @tag_padding("<初始化列表数量合规-libclang识别>")
     @staticmethod
@@ -601,5 +614,3 @@ class Checker_404S(Checker):
                 return problem
 
         return problem
-
-
