@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": { "title": "404S · 字符串数组的赋值必须在所分配的空间之内", "locale": "zh-CN", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "parse", "label": "解析" },
+    { "id": "text", "label": "纯文本算法" },
+    { "id": "libc", "label": "libclang 算法" },
+    { "id": "result", "label": "判误报" },
+    { "id": "keep", "label": "保守保留" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "解析数组定义", "fromCol": 0, "toCol": 0 },
+    { "id": "judge", "label": "初始化列表维度对比", "fromCol": 1, "toCol": 3, "variant": "emphasis" }
+  ],
+  "mainPath": ["p", "s1", "s2", "hit"],
+  "nodes": [
+    { "id": "p", "lane": "parse", "col": 0, "type": "external", "label": "404S 问题", "sublabel": "数组初始化超出声明", "width": 130 },
+    { "id": "s1", "lane": "text", "col": 1, "type": "backend", "label": "纯文本算法", "sublabel": "展开 include 统计每维元素数", "width": 155 },
+    { "id": "s2", "lane": "libc", "col": 2, "type": "backend", "label": "libclang 算法", "sublabel": "类型 + TU 诊断 excess elements", "width": 170 },
+    { "id": "hit", "lane": "result", "col": 3, "type": "security", "label": "判误报", "sublabel": "各维均不超过声明大小", "width": 135 },
+    { "id": "keep", "lane": "keep", "col": 3, "type": "backend", "label": "保守保留", "sublabel": "文本/语义均无法判别", "width": 130 }
+  ],
+  "edges": [
+    { "from": "p", "to": "s1" },
+    { "from": "s1", "to": "hit", "variant": "emphasis", "label": "各维合规" },
+    { "from": "s1", "to": "s2", "label": "文本不可判", "variant": "default", "role": "branch" },
+    { "from": "s2", "to": "hit", "variant": "emphasis", "label": "诊断匹配" },
+    { "from": "s2", "to": "keep", "variant": "security", "role": "branch", "label": "不可判" }
+  ]
+}

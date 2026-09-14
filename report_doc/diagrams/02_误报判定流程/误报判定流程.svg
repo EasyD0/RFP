@@ -1,0 +1,201 @@
+<svg viewBox="0 0 907 660" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">单条问题的误报判定流程</title>
+        <desc id="archify-diagram-description">由 Archify 生成的工作流图。</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Swimlanes -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="851" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / 解析与调度</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="178" width="851" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="200" class="t-dim" font-size="10" font-weight="600">02 / 规则子算法</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="304" width="851" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="326" class="t-dim" font-size="10" font-weight="600">03 / 判定结果</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="430" width="851" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="436" width="839" height="94" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="54" y="452" class="t-security" font-size="10" font-weight="600">EX / 保守策略</text>
+
+        <!-- Phase headers -->
+        <line x1="68" y1="35" x2="330" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="68" y="27" width="262" height="16" rx="4" class="c-mask"/>
+        <text x="199" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">解析与聚合</text>
+        <line x1="358" y1="35" x2="570" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="358" y="27" width="212" height="16" rx="4" class="c-mask"/>
+        <text x="464" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">子算法判定·短路</text>
+        <line x1="666.4" y1="35" x2="758.4" y2="35" class="a-dashed" stroke-width="1.1"/>
+        <rect x="666.4" y="27" width="92" height="16" rx="4" class="c-mask"/>
+        <text x="712.4" y="39" class="t-messagebus" font-size="8" font-weight="600" text-anchor="middle">结果 · 建议式</text>
+
+        <!-- Workflow groups -->
+
+
+        <!-- Edge paths -->
+        <path data-edge-from="do_run" data-edge-to="hit" data-edge-label="命中误报" data-edge-key="0" data-edge-id="do-hit" data-composition-points="470,246;524,246;524,338" d="M 470 246 L 524 246 L 524 338" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="do_run" data-edge-to="keep" data-edge-label="无法证明" data-edge-key="1" data-edge-id="do-keep" data-composition-points="411,280;411,498;458,498" d="M 411 280 L 411 498 L 458 498" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="gather" data-edge-to="do_run" data-edge-label="do()" data-edge-key="2" data-edge-id="gather-do" data-composition-points="284,146;284,246;338,246" d="M 284 146 L 284 246 L 338 246" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="hit" data-edge-to="annotate" data-edge-label="追加 tag" data-edge-key="3" data-edge-id="hit-annotate" data-composition-points="590,372;646.4,372" d="M 590 372 L 646.4 372" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="keep" data-edge-to="manual" data-edge-label="保留" data-edge-key="4" data-edge-id="keep-manual" data-composition-points="590,498;646.4,498" d="M 590 498 L 646.4 498" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="problem" data-edge-to="gather" data-edge-label="解析" data-edge-key="5" data-edge-id="problem-gather" data-composition-points="180,120;218,120" d="M 180 120 L 218 120" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+
+        <!-- Nodes -->
+        <g id="node-problem" data-node-id="problem" data-node-label="问题条目" tabindex="0" role="button" aria-label="聚焦问题条目，含 code_line / 规则 / 位置, 解析与调度 › 解析与聚合" aria-pressed="false" data-node-kind="external" data-node-sublabel="含 code_line / 规则 / 位置" data-node-context="解析与调度 › 解析与聚合">
+          <title>问题条目 · 含 code_line / 规则 / 位置 · 解析与调度 › 解析与聚合</title>
+          <rect x="48" y="94" width="132" height="52" rx="6" class="c-mask"/>
+          <rect x="48" y="94" width="132" height="52" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(54 100) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="114" y="115" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">问题条目</text>
+          <text data-detail="context" x="114" y="132" class="t-muted" font-size="7.9" text-anchor="middle">含 code_line / 规则 / 位置</text>
+        </g>
+
+        <g id="node-gather" data-node-id="gather" data-node-label="聚合检查器" tabindex="0" role="button" aria-label="聚焦聚合检查器，从 CheckerDict 查询, 解析与调度 › 解析与聚合" aria-pressed="false" data-node-kind="backend" data-node-sublabel="从 CheckerDict 查询" data-node-context="解析与调度 › 解析与聚合">
+          <title>聚合检查器 · 从 CheckerDict 查询 · 解析与调度 › 解析与聚合</title>
+          <rect x="218" y="94" width="132" height="52" rx="6" class="c-mask"/>
+          <rect x="218" y="94" width="132" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(224 100) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="284" y="115" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">聚合检查器</text>
+          <text data-detail="context" x="284" y="132" class="t-muted" font-size="8" text-anchor="middle">从 CheckerDict 查询</text>
+        </g>
+
+        <g id="node-do_run" data-node-id="do_run" data-node-label="执行子算法 do()" tabindex="0" role="button" aria-label="聚焦执行子算法 do()，命中即短路, 规则子算法 › 子算法判定·短路" aria-pressed="false" data-node-kind="backend" data-node-sublabel="命中即短路" data-node-tag="宁缺毋滥" data-node-context="规则子算法 › 子算法判定·短路">
+          <title>执行子算法 do() · 命中即短路 · 规则子算法 › 子算法判定·短路 · 宁缺毋滥</title>
+          <rect x="338" y="212" width="132" height="68" rx="6" class="c-mask"/>
+          <rect x="338" y="212" width="132" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(344 218) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="404" y="233" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">执行子算法 do()</text>
+          <text data-detail="context" x="404" y="250" class="t-muted" font-size="8" text-anchor="middle">命中即短路</text>
+        <text data-detail="fine" x="404" y="268" class="t-backend" font-size="7" text-anchor="middle">宁缺毋滥</text>
+        </g>
+
+        <g id="node-hit" data-node-id="hit" data-node-label="判定误报" tabindex="0" role="button" aria-label="聚焦判定误报，找到可证依据, 判定结果 › 子算法判定·短路" aria-pressed="false" data-node-kind="security" data-node-sublabel="找到可证依据" data-node-tag="判了必对" data-node-context="判定结果 › 子算法判定·短路">
+          <title>判定误报 · 找到可证依据 · 判定结果 › 子算法判定·短路 · 判了必对</title>
+          <rect x="458" y="338" width="132" height="68" rx="6" class="c-mask"/>
+          <rect x="458" y="338" width="132" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(464 344) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="524" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">判定误报</text>
+          <text data-detail="context" x="524" y="376" class="t-muted" font-size="8" text-anchor="middle">找到可证依据</text>
+        <text data-detail="fine" x="524" y="394" class="t-security" font-size="7" text-anchor="middle">判了必对</text>
+        </g>
+
+        <g id="node-annotate" data-node-id="annotate" data-node-label="打判定 tag" tabindex="0" role="button" aria-label="聚焦打判定 tag，条目保留·不删除, 判定结果 › 结果 · 建议式" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="条目保留·不删除" data-node-tag="建议式" data-node-context="判定结果 › 结果 · 建议式">
+          <title>打判定 tag · 条目保留·不删除 · 判定结果 › 结果 · 建议式 · 建议式</title>
+          <rect x="646.4" y="338" width="132" height="68" rx="6" class="c-mask"/>
+          <rect x="646.4" y="338" width="132" height="68" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(652.4 344) scale(0.6875)">
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
+            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
+            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="712.4" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">打判定 tag</text>
+          <text data-detail="context" x="712.4" y="376" class="t-muted" font-size="8" text-anchor="middle">条目保留·不删除</text>
+        <text data-detail="fine" x="712.4" y="394" class="t-messagebus" font-size="7" text-anchor="middle">建议式</text>
+        </g>
+
+        <g id="node-keep" data-node-id="keep" data-node-label="保守保留" tabindex="0" role="button" aria-label="聚焦保守保留，未能证明·不判, 保守策略 › 子算法判定·短路" aria-pressed="false" data-node-kind="backend" data-node-sublabel="未能证明·不判" data-node-context="保守策略 › 子算法判定·短路">
+          <title>保守保留 · 未能证明·不判 · 保守策略 › 子算法判定·短路</title>
+          <rect x="458" y="472" width="132" height="52" rx="6" class="c-mask"/>
+          <rect x="458" y="472" width="132" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(464 478) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="524" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">保守保留</text>
+          <text data-detail="context" x="524" y="510" class="t-muted" font-size="8" text-anchor="middle">未能证明·不判</text>
+        </g>
+
+        <g id="node-manual" data-node-id="manual" data-node-label="待人工复核" tabindex="0" role="button" aria-label="聚焦待人工复核，问题保留·不误杀, 保守策略 › 结果 · 建议式" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="问题保留·不误杀" data-node-context="保守策略 › 结果 · 建议式">
+          <title>待人工复核 · 问题保留·不误杀 · 保守策略 › 结果 · 建议式</title>
+          <rect x="646.4" y="472" width="132" height="52" rx="6" class="c-mask"/>
+          <rect x="646.4" y="472" width="132" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(652.4 478) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="712.4" y="493" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">待人工复核</text>
+          <text data-detail="context" x="712.4" y="510" class="t-muted" font-size="8" text-anchor="middle">问题保留·不误杀</text>
+        </g>
+
+        <!-- Edge labels -->
+        <g data-detail="context" data-edge-from="do_run" data-edge-to="hit" data-edge-label="命中误报" data-edge-key="0" data-edge-id="do-hit">
+          <rect x="472.8" y="226" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="497" y="236" class="t-backend" font-size="8" text-anchor="middle">命中误报</text>
+        </g>
+        <g data-detail="context" data-edge-from="do_run" data-edge-to="keep" data-edge-label="无法证明" data-edge-key="1" data-edge-id="do-keep">
+          <rect x="410.3" y="478" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="434.5" y="488" class="t-security" font-size="8" text-anchor="middle">无法证明</text>
+        </g>
+        <g data-detail="context" data-edge-from="gather" data-edge-to="do_run" data-edge-label="do()" data-edge-key="2" data-edge-id="gather-do">
+          <rect x="296" y="226" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="311" y="236" class="t-backend" font-size="8" text-anchor="middle">do()</text>
+        </g>
+        <g data-detail="context" data-edge-from="hit" data-edge-to="annotate" data-edge-label="追加 tag" data-edge-key="3" data-edge-id="hit-annotate">
+          <rect x="594" y="352" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="618.2" y="362" class="t-backend" font-size="8" text-anchor="middle">追加 tag</text>
+        </g>
+        <g data-detail="context" data-edge-from="keep" data-edge-to="manual" data-edge-label="保留" data-edge-key="4" data-edge-id="keep-manual">
+          <rect x="603.2" y="478" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="618.2" y="488" class="t-database" font-size="8" text-anchor="middle">保留</text>
+        </g>
+        <g data-detail="context" data-edge-from="problem" data-edge-to="gather" data-edge-label="解析" data-edge-key="5" data-edge-id="problem-gather">
+          <rect x="184" y="100" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="199" y="110" class="t-muted" font-size="8" text-anchor="middle">解析</text>
+        </g>
+
+        <!-- Legend -->
+        <g data-legend="" data-legend-bridge="">
+          <text x="20" y="560" class="t-primary" font-size="12" font-weight="650">图例</text>
+          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="用户界面" data-legend-x="20" data-legend-baseline="580" data-legend-width="78">
+            <rect x="20" y="572" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
+            <text x="42" y="580" class="t-muted" font-size="7.5" font-weight="500">用户界面</text>
+          </g>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent 逻辑" data-legend-x="105" data-legend-baseline="580" data-legend-width="87">
+            <rect x="105" y="572" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="127" y="580" class="t-muted" font-size="7.5" font-weight="500">Agent 逻辑</text>
+          </g>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="策略" data-legend-x="199" data-legend-baseline="580" data-legend-width="61">
+            <rect x="199" y="572" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="221" y="580" class="t-muted" font-size="7.5" font-weight="500">策略</text>
+          </g>
+          <g data-legend-semantic-kind="messagebus" data-legend-kind="messagebus" data-legend-label="工具操作" data-legend-x="267" data-legend-baseline="580" data-legend-width="78">
+            <rect x="267" y="572" width="14" height="9" rx="2" class="c-messagebus" stroke-width="1"/>
+            <text x="289" y="580" class="t-muted" font-size="7.5" font-weight="500">工具操作</text>
+          </g>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="外部系统" data-legend-x="352" data-legend-baseline="580" data-legend-width="78">
+            <rect x="352" y="572" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+            <text x="374" y="580" class="t-muted" font-size="7.5" font-weight="500">外部系统</text>
+          </g>
+        </g>
+      </svg>

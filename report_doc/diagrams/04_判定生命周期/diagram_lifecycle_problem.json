@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "单条问题（Problem）的判定生命周期",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [980, 660]
+  },
+  "lanes": [
+    { "id": "main", "label": "判定" },
+    { "id": "branch", "label": "判定分支" },
+    { "id": "terminal", "label": "建议式结果" }
+  ],
+  "states": [
+    { "id": "pending", "type": "start", "label": "待判定", "sublabel": "报告条目", "lane": "main", "col": 0, "step": "01" },
+    { "id": "executing", "type": "active", "label": "子算法执行", "sublabel": "命中即短路", "lane": "main", "col": 1, "step": "02", "tag": "无虚警" },
+    { "id": "hit", "type": "success", "label": "判定误报", "sublabel": "已找到可证依据", "lane": "branch", "col": 0, "step": "03", "tag": "判了必对" },
+    { "id": "kept", "type": "neutral", "label": "保守保留", "sublabel": "未能证明·不判", "lane": "branch", "col": 1, "step": "04", "tag": "宁缺毋滥" },
+    { "id": "retained", "type": "neutral", "label": "条目保留·不删除", "sublabel": "只打 tag 或留作复核", "lane": "terminal", "col": 0, "step": "05", "tag": "建议式" }
+  ],
+  "transitions": [
+    { "id": "start-run", "from": "pending", "to": "executing", "variant": "default" },
+    { "id": "run-hit", "from": "executing", "to": "hit", "label": "命中误报", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "id": "run-kept", "from": "executing", "to": "kept", "label": "无法证明", "variant": "security", "fromSide": "right", "toSide": "top" },
+    { "id": "hit-retained", "from": "hit", "to": "retained", "label": "打 tag·不删除", "variant": "dashed", "labelDy": 24 },
+    { "id": "kept-retained", "from": "kept", "to": "retained", "label": "保留待复核", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "判了必对", "items": ["只有在能证明时判定误报", "命中后立即短路后续子算法"] },
+    { "dot": "rose", "title": "宁缺毋滥·建议式", "items": ["无法证明的一律保守保留", "误报条目不删除，仅打 tag，可审计可回退"] }
+  ]
+}

@@ -1,0 +1,153 @@
+<svg viewBox="0 0 787 776" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">404S · 字符串数组的赋值必须在所分配的空间之内</title>
+        <desc id="archify-diagram-description">由 Archify 生成的工作流图。</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Swimlanes -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="731" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / 解析</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="176" width="731" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="198" class="t-dim" font-size="10" font-weight="600">02 / 纯文本算法</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="300" width="731" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="322" class="t-dim" font-size="10" font-weight="600">03 / libclang 算法</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="424" width="731" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="446" class="t-dim" font-size="10" font-weight="600">04 / 判误报</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-4" x="40" y="548" width="731" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="570" class="t-dim" font-size="10" font-weight="600">05 / 保守保留</text>
+
+        <!-- Phase headers -->
+        <line x1="67" y1="35" x2="159" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="67" y="27" width="92" height="16" rx="4" class="c-mask"/>
+        <text x="113" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">解析数组定义</text>
+        <line x1="187" y1="35" x2="519" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="187" y="27" width="332" height="16" rx="4" class="c-mask"/>
+        <text x="353" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">初始化列表维度对比</text>
+
+        <!-- Workflow groups -->
+
+
+        <!-- Edge paths -->
+        <path data-edge-from="p" data-edge-to="s1" data-edge-key="0" data-composition-points="178,119;233,119;233,217" d="M 178 119 L 233 119 L 233 217" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="s1" data-edge-to="hit" data-edge-label="各维合规" data-edge-key="1" data-composition-points="310.5,243;473,243;473,465" d="M 310.5 243 L 473 243 L 473 465" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="s1" data-edge-to="s2" data-edge-label="文本不可判" data-edge-key="2" data-composition-points="233,269;233,290;353,290;353,341" d="M 233 269 L 233 290 L 353 290 L 353 341" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="s2" data-edge-to="hit" data-edge-label="诊断匹配" data-edge-key="3" data-composition-points="346,393;346,498;405.5,498" d="M 346 393 L 346 498 L 405.5 498" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="s2" data-edge-to="keep" data-edge-label="不可判" data-edge-key="4" data-composition-points="268,367;252,367;252,668;473,668;473,641" d="M 268 367 L 252 367 L 252 668 L 473 668 L 473 641" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+
+        <!-- Nodes -->
+        <g id="node-p" data-node-id="p" data-node-label="404S 问题" tabindex="0" role="button" aria-label="聚焦404S 问题，数组初始化超出声明, 解析 › 解析数组定义" aria-pressed="false" data-node-kind="external" data-node-sublabel="数组初始化超出声明" data-node-context="解析 › 解析数组定义">
+          <title>404S 问题 · 数组初始化超出声明 · 解析 › 解析数组定义</title>
+          <rect x="48" y="93" width="130" height="52" rx="6" class="c-mask"/>
+          <rect x="48" y="93" width="130" height="52" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(54 99) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="113" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">404S 问题</text>
+          <text data-detail="context" x="113" y="131" class="t-muted" font-size="8" text-anchor="middle">数组初始化超出声明</text>
+        </g>
+
+        <g id="node-s1" data-node-id="s1" data-node-label="纯文本算法" tabindex="0" role="button" aria-label="聚焦纯文本算法，展开 include 统计每维元素数, 纯文本算法 › 初始化列表维度对比" aria-pressed="false" data-node-kind="backend" data-node-sublabel="展开 include 统计每维元素数" data-node-context="纯文本算法 › 初始化列表维度对比">
+          <title>纯文本算法 · 展开 include 统计每维元素数 · 纯文本算法 › 初始化列表维度对比</title>
+          <rect x="155.5" y="217" width="155" height="52" rx="6" class="c-mask"/>
+          <rect x="155.5" y="217" width="155" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(161.5 223) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="233" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">纯文本算法</text>
+          <text data-detail="context" x="233" y="255" class="t-muted" font-size="8" text-anchor="middle">展开 include 统计每维元素数</text>
+        </g>
+
+        <g id="node-s2" data-node-id="s2" data-node-label="libclang 算法" tabindex="0" role="button" aria-label="聚焦libclang 算法，类型 + TU 诊断 excess elements, libclang 算法 › 初始化列表维度对比" aria-pressed="false" data-node-kind="backend" data-node-sublabel="类型 + TU 诊断 excess elements" data-node-context="libclang 算法 › 初始化列表维度对比">
+          <title>libclang 算法 · 类型 + TU 诊断 excess elements · libclang 算法 › 初始化列表维度对比</title>
+          <rect x="268" y="341" width="170" height="52" rx="6" class="c-mask"/>
+          <rect x="268" y="341" width="170" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(274 347) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="353" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">libclang 算法</text>
+          <text data-detail="context" x="353" y="379" class="t-muted" font-size="8" text-anchor="middle">类型 + TU 诊断 excess elements</text>
+        </g>
+
+        <g id="node-hit" data-node-id="hit" data-node-label="判误报" tabindex="0" role="button" aria-label="聚焦判误报，各维均不超过声明大小, 判误报 › 初始化列表维度对比" aria-pressed="false" data-node-kind="security" data-node-sublabel="各维均不超过声明大小" data-node-context="判误报 › 初始化列表维度对比">
+          <title>判误报 · 各维均不超过声明大小 · 判误报 › 初始化列表维度对比</title>
+          <rect x="405.5" y="465" width="135" height="52" rx="6" class="c-mask"/>
+          <rect x="405.5" y="465" width="135" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(411.5 471) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="473" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">判误报</text>
+          <text data-detail="context" x="473" y="503" class="t-muted" font-size="8" text-anchor="middle">各维均不超过声明大小</text>
+        </g>
+
+        <g id="node-keep" data-node-id="keep" data-node-label="保守保留" tabindex="0" role="button" aria-label="聚焦保守保留，文本/语义均无法判别, 保守保留 › 初始化列表维度对比" aria-pressed="false" data-node-kind="backend" data-node-sublabel="文本/语义均无法判别" data-node-context="保守保留 › 初始化列表维度对比">
+          <title>保守保留 · 文本/语义均无法判别 · 保守保留 › 初始化列表维度对比</title>
+          <rect x="408" y="589" width="130" height="52" rx="6" class="c-mask"/>
+          <rect x="408" y="589" width="130" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(414 595) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="473" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">保守保留</text>
+          <text data-detail="context" x="473" y="627" class="t-muted" font-size="8" text-anchor="middle">文本/语义均无法判别</text>
+        </g>
+
+        <!-- Edge labels -->
+
+        <g data-detail="context" data-edge-from="s1" data-edge-to="hit" data-edge-label="各维合规" data-edge-key="1">
+          <rect x="367.55" y="223" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="391.75" y="233" class="t-backend" font-size="8" text-anchor="middle">各维合规</text>
+        </g>
+        <g data-detail="context" data-edge-from="s1" data-edge-to="s2" data-edge-label="文本不可判" data-edge-key="2">
+          <rect x="264" y="270" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="293" y="280" class="t-muted" font-size="8" text-anchor="middle">文本不可判</text>
+        </g>
+        <g data-detail="context" data-edge-from="s2" data-edge-to="hit" data-edge-label="诊断匹配" data-edge-key="3">
+          <rect x="351.55" y="478" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="375.75" y="488" class="t-backend" font-size="8" text-anchor="middle">诊断匹配</text>
+        </g>
+        <g data-detail="context" data-edge-from="s2" data-edge-to="keep" data-edge-label="不可判" data-edge-key="4">
+          <rect x="343.1" y="648" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="362.5" y="658" class="t-security" font-size="8" text-anchor="middle">不可判</text>
+        </g>
+
+        <!-- Legend -->
+        <g data-legend="" data-legend-bridge="">
+          <text x="20" y="676" class="t-primary" font-size="12" font-weight="650">图例</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent 逻辑" data-legend-x="20" data-legend-baseline="696" data-legend-width="87">
+            <rect x="20" y="688" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="42" y="696" class="t-muted" font-size="7.5" font-weight="500">Agent 逻辑</text>
+          </g>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="策略" data-legend-x="114" data-legend-baseline="696" data-legend-width="61">
+            <rect x="114" y="688" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="136" y="696" class="t-muted" font-size="7.5" font-weight="500">策略</text>
+          </g>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="外部系统" data-legend-x="182" data-legend-baseline="696" data-legend-width="78">
+            <rect x="182" y="688" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+            <text x="204" y="696" class="t-muted" font-size="7.5" font-weight="500">外部系统</text>
+          </g>
+        </g>
+      </svg>

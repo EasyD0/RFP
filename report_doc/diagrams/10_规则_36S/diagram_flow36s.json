@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": { "title": "36S · 函数没有返回语句", "locale": "zh-CN", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "parse", "label": "解析" },
+    { "id": "check", "label": "引用判定" },
+    { "id": "result", "label": "判误报" },
+    { "id": "keep", "label": "保守保留" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "定位引用", "fromCol": 0, "toCol": 1 },
+    { "id": "judge", "label": "逐一验证返回值是否被使用", "fromCol": 2, "toCol": 3, "variant": "emphasis" }
+  ],
+  "mainPath": ["p", "s1", "s2", "check_ret", "hit"],
+  "nodes": [
+    { "id": "p", "lane": "parse", "col": 0, "type": "external", "label": "36S 问题", "sublabel": "声明有返回值却缺 return", "width": 140 },
+    { "id": "s1", "lane": "check", "col": 1, "type": "backend", "label": "定位全部引用", "sublabel": "clangd textDocument/references", "width": 160 },
+    { "id": "s2", "lane": "check", "col": 2, "type": "backend", "label": "逐引用解析 CallExpr", "sublabel": "libclang 定位最内层调用", "width": 152 },
+    { "id": "check_ret", "lane": "check", "col": 3, "type": "backend", "label": "返回值是否被使用", "sublabel": "父节点：CompoundStmt / (void) / 无括号体", "width": 170 },
+    { "id": "hit", "lane": "result", "col": 4, "type": "security", "label": "判误报", "sublabel": "所有引用均未使用返回值", "width": 140 },
+    { "id": "keep", "lane": "keep", "col": 4, "type": "backend", "label": "非误报", "sublabel": "存在使用返回值的引用", "width": 130 }
+  ],
+  "edges": [
+    { "from": "p", "to": "s1" },
+    { "from": "s1", "to": "s2" },
+    { "from": "s2", "to": "check_ret" },
+    { "from": "check_ret", "to": "hit", "variant": "emphasis", "label": "皆不使用" },
+    { "from": "check_ret", "to": "keep", "variant": "security", "role": "branch", "label": "有使用" }
+  ]
+}

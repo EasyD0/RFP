@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "36S：跨翻译单元的引用查询与判定",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [940, 780]
+  },
+  "participants": [
+    { "id": "rule", "type": "backend", "label": "36S 规则", "sublabel": "checker/rules" },
+    { "id": "clangd_tool", "type": "backend", "label": "clangd_tool", "sublabel": "LSP 客户端" },
+    { "id": "clangd", "type": "external", "label": "clangd", "sublabel": "跨 TU 索引" },
+    { "id": "ast", "type": "backend", "label": "libclang AST", "sublabel": "clang_tool" },
+    { "id": "verdict", "type": "messagebus", "label": "判定结果", "sublabel": "误报" }
+  ],
+  "messages": [
+    { "from": "rule", "to": "clangd_tool", "y": 180, "label": "请求函数全部引用", "variant": "emphasis" },
+    { "from": "clangd_tool", "to": "clangd", "y": 224, "label": "textDocument/references", "variant": "emphasis" },
+    { "from": "clangd", "to": "clangd_tool", "y": 268, "label": "索引就绪（仅首次等待）", "variant": "dashed" },
+    { "from": "clangd", "to": "clangd_tool", "y": 312, "label": "全部引用位置", "variant": "return" },
+    { "from": "clangd_tool", "to": "rule", "y": 356, "label": "跨编译单元引用列表", "variant": "return" },
+    { "from": "rule", "to": "ast", "y": 430, "label": "逐引用定位最内层 CallExpr", "variant": "default" },
+    { "from": "ast", "to": "rule", "y": 474, "label": "父节点：CompoundStmt / (void) / 无括号体", "variant": "return" },
+    { "from": "rule", "to": "verdict", "y": 548, "label": "所有引用均不使用返回值 → 误报", "variant": "emphasis" }
+  ]
+}

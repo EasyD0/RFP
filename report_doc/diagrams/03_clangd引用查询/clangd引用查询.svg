@@ -1,0 +1,187 @@
+<svg viewBox="0 0 940 780" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">36S：跨翻译单元的引用查询与判定</title>
+        <desc id="archify-diagram-description">由 Archify 生成的时序图。</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Time Segments -->
+
+
+        <!-- Lifelines -->
+        <path d="M 131.5 142 L 131.5 715" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 306.25 142 L 306.25 715" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 481 142 L 481 715" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 655.75 142 L 655.75 715" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+        <path d="M 830.5 142 L 830.5 715" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
+
+        <!-- Activations -->
+
+
+        <!-- Messages -->
+        <g data-edge-from="rule" data-edge-to="clangd_tool" data-edge-label="请求函数全部引用" data-edge-key="0">
+          <path data-composition-edge-from="rule" data-composition-edge-to="clangd_tool" data-composition-points="138.5,180;299.25,180" d="M 138.5 180 L 299.25 180" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-detail="context">
+          <rect x="171.275" y="160" width="95.2" height="16" rx="3" class="c-mask"/>
+          <text x="218.875" y="170" class="t-backend" font-size="9" text-anchor="middle">请求函数全部引用</text>
+        </g>
+        </g>
+
+        <g data-edge-from="clangd_tool" data-edge-to="clangd" data-edge-label="textDocument/references" data-edge-key="1">
+          <path data-composition-edge-from="clangd_tool" data-composition-edge-to="clangd" data-composition-points="313.25,224;474,224" d="M 313.25 224 L 474 224" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-detail="context">
+          <rect x="327.825" y="204" width="131.60000000000002" height="16" rx="3" class="c-mask"/>
+          <text x="393.625" y="214" class="t-backend" font-size="9" text-anchor="middle">textDocument/references</text>
+        </g>
+        </g>
+
+        <g data-edge-from="clangd" data-edge-to="clangd_tool" data-edge-label="索引就绪（仅首次等待）" data-edge-key="2">
+          <path data-composition-edge-from="clangd" data-composition-edge-to="clangd_tool" data-composition-points="474,268;313.25,268" d="M 474 268 L 313.25 268" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <g data-detail="context">
+          <rect x="330.425" y="248" width="126.4" height="16" rx="3" class="c-mask"/>
+          <text x="393.625" y="258" class="t-messagebus" font-size="9" text-anchor="middle">索引就绪（仅首次等待）</text>
+        </g>
+        </g>
+
+        <g data-edge-from="clangd" data-edge-to="clangd_tool" data-edge-label="全部引用位置" data-edge-key="3">
+          <path data-composition-edge-from="clangd" data-composition-edge-to="clangd_tool" data-composition-points="474,312;313.25,312" d="M 474 312 L 313.25 312" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="356.425" y="292" width="74.4" height="16" rx="3" class="c-mask"/>
+          <text x="393.625" y="302" class="t-muted" font-size="9" text-anchor="middle">全部引用位置</text>
+        </g>
+        </g>
+
+        <g data-edge-from="clangd_tool" data-edge-to="rule" data-edge-label="跨编译单元引用列表" data-edge-key="4">
+          <path data-composition-edge-from="clangd_tool" data-composition-edge-to="rule" data-composition-points="299.25,356;138.5,356" d="M 299.25 356 L 138.5 356" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="166.075" y="336" width="105.60000000000001" height="16" rx="3" class="c-mask"/>
+          <text x="218.875" y="346" class="t-muted" font-size="9" text-anchor="middle">跨编译单元引用列表</text>
+        </g>
+        </g>
+
+        <g data-edge-from="rule" data-edge-to="ast" data-edge-label="逐引用定位最内层 CallExpr" data-edge-key="5">
+          <path data-composition-edge-from="rule" data-composition-edge-to="ast" data-composition-points="138.5,430;648.75,430" d="M 138.5 430 L 648.75 430" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="322.625" y="410" width="142" height="16" rx="3" class="c-mask"/>
+          <text x="393.625" y="420" class="t-backend" font-size="9" text-anchor="middle">逐引用定位最内层 CallExpr</text>
+        </g>
+        </g>
+
+        <g data-edge-from="ast" data-edge-to="rule" data-edge-label="父节点：CompoundStmt / (void) / 无括号体" data-edge-key="6">
+          <path data-composition-edge-from="ast" data-composition-edge-to="rule" data-composition-points="648.75,474;138.5,474" d="M 648.75 474 L 138.5 474" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-detail="context">
+          <rect x="283.625" y="454" width="220" height="16" rx="3" class="c-mask"/>
+          <text x="393.625" y="464" class="t-muted" font-size="9" text-anchor="middle">父节点：CompoundStmt / (void) / 无括号体</text>
+        </g>
+        </g>
+
+        <g data-edge-from="rule" data-edge-to="verdict" data-edge-label="所有引用均不使用返回值 → 误报" data-edge-key="7">
+          <path data-composition-edge-from="rule" data-composition-edge-to="verdict" data-composition-points="138.5,548;823.5,548" d="M 138.5 548 L 823.5 548" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-detail="context">
+          <rect x="399.6" y="528" width="162.8" height="16" rx="3" class="c-mask"/>
+          <text x="481" y="538" class="t-backend" font-size="9" text-anchor="middle">所有引用均不使用返回值 → 误报</text>
+        </g>
+        </g>
+
+        <!-- Segment Labels -->
+
+
+        <!-- Participants -->
+        <g id="node-rule" data-node-id="rule" data-node-label="36S 规则" tabindex="0" role="button" aria-label="聚焦36S 规则，checker/rules, 时序参与者" aria-pressed="false" data-node-kind="backend" data-node-sublabel="checker/rules" data-node-context="时序参与者">
+          <title>36S 规则 · checker/rules · 时序参与者</title>
+          <rect x="62" y="72" width="139" height="54" rx="6" class="c-mask"/>
+          <rect x="62" y="72" width="139" height="54" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(68 78) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="131.5" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">36S 规则</text>
+          <text data-detail="context" x="131.5" y="111" class="t-muted" font-size="7" text-anchor="middle">checker/rules</text>
+        </g>
+
+        <g id="node-clangd_tool" data-node-id="clangd_tool" data-node-label="clangd_tool" tabindex="0" role="button" aria-label="聚焦clangd_tool，LSP 客户端, 时序参与者" aria-pressed="false" data-node-kind="backend" data-node-sublabel="LSP 客户端" data-node-context="时序参与者">
+          <title>clangd_tool · LSP 客户端 · 时序参与者</title>
+          <rect x="236.75" y="72" width="139" height="54" rx="6" class="c-mask"/>
+          <rect x="236.75" y="72" width="139" height="54" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(242.75 78) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="306.25" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">clangd_tool</text>
+          <text data-detail="context" x="306.25" y="111" class="t-muted" font-size="7" text-anchor="middle">LSP 客户端</text>
+        </g>
+
+        <g id="node-clangd" data-node-id="clangd" data-node-label="clangd" tabindex="0" role="button" aria-label="聚焦clangd，跨 TU 索引, 时序参与者" aria-pressed="false" data-node-kind="external" data-node-sublabel="跨 TU 索引" data-node-context="时序参与者">
+          <title>clangd · 跨 TU 索引 · 时序参与者</title>
+          <rect x="411.5" y="72" width="139" height="54" rx="6" class="c-mask"/>
+          <rect x="411.5" y="72" width="139" height="54" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(417.5 78) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="481" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">clangd</text>
+          <text data-detail="context" x="481" y="111" class="t-muted" font-size="7" text-anchor="middle">跨 TU 索引</text>
+        </g>
+
+        <g id="node-ast" data-node-id="ast" data-node-label="libclang AST" tabindex="0" role="button" aria-label="聚焦libclang AST，clang_tool, 时序参与者" aria-pressed="false" data-node-kind="backend" data-node-sublabel="clang_tool" data-node-context="时序参与者">
+          <title>libclang AST · clang_tool · 时序参与者</title>
+          <rect x="586.25" y="72" width="139" height="54" rx="6" class="c-mask"/>
+          <rect x="586.25" y="72" width="139" height="54" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(592.25 78) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="655.75" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">libclang AST</text>
+          <text data-detail="context" x="655.75" y="111" class="t-muted" font-size="7" text-anchor="middle">clang_tool</text>
+        </g>
+
+        <g id="node-verdict" data-node-id="verdict" data-node-label="判定结果" tabindex="0" role="button" aria-label="聚焦判定结果，误报, 时序参与者" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="误报" data-node-context="时序参与者">
+          <title>判定结果 · 误报 · 时序参与者</title>
+          <rect x="761" y="72" width="139" height="54" rx="6" class="c-mask"/>
+          <rect x="761" y="72" width="139" height="54" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(767 78) scale(0.6875)">
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
+            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
+            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="830.5" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">判定结果</text>
+          <text data-detail="context" x="830.5" y="111" class="t-muted" font-size="7" text-anchor="middle">误报</text>
+        </g>
+
+        <!-- Legend -->
+        <g data-legend="">
+          <text x="40" y="706" class="t-primary" font-size="12" font-weight="650">图例</text>
+          <g data-legend-semantic-kind="emphasis" data-legend-x="40" data-legend-baseline="726" data-legend-width="63">
+            <path d="M 40 723 L 74 723" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+            <text x="83" y="726" class="t-muted" font-size="10" font-weight="500">请求</text>
+          </g>
+          <g data-legend-semantic-kind="return" data-legend-x="125" data-legend-baseline="726" data-legend-width="63">
+            <path d="M 125 723 L 159 723" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+            <text x="168" y="726" class="t-muted" font-size="10" font-weight="500">返回</text>
+          </g>
+          <g data-legend-semantic-kind="dashed" data-legend-x="210" data-legend-baseline="726" data-legend-width="83">
+            <path d="M 210 723 L 244 723" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+            <text x="253" y="726" class="t-muted" font-size="10" font-weight="500">异步追踪</text>
+          </g>
+          <g data-legend-semantic-kind="default" data-legend-x="315" data-legend-baseline="726" data-legend-width="83">
+            <path d="M 315 723 L 349 723" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+            <text x="358" y="726" class="t-muted" font-size="10" font-weight="500">默认消息</text>
+          </g>
+        </g>
+      </svg>

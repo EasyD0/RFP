@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": { "title": "69D · 变量未赋值就使用", "locale": "zh-CN", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "parse", "label": "解析" },
+    { "id": "check", "label": "子算法判定" },
+    { "id": "result", "label": "判误报" },
+    { "id": "keep", "label": "保守保留" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "解析", "fromCol": 0, "toCol": 0 },
+    { "id": "judge", "label": "子算法检查·命中即止", "fromCol": 1, "toCol": 5, "variant": "emphasis" }
+  ],
+  "mainPath": ["p", "s1", "s2", "s3", "s4", "keep"],
+  "nodes": [
+    { "id": "p", "lane": "parse", "col": 0, "type": "external", "label": "69D 问题", "sublabel": "变量未赋值就使用", "width": 120 },
+    { "id": "s1", "lane": "check", "col": 1, "type": "backend", "label": "声明处显式初始化", "sublabel": "声明行含 = 且非 ==", "width": 132 },
+    { "id": "s2", "lane": "check", "col": 2, "type": "backend", "label": "全局/静态零初始化", "sublabel": "全局作用域或 static 存储期", "width": 140 },
+    { "id": "s3", "lane": "check", "col": 3, "type": "backend", "label": "中途初始化(同层)", "sublabel": "引用前同一层级有 var= / &var", "width": 150 },
+    { "id": "s4", "lane": "check", "col": 5, "type": "backend", "label": "仅取地址使用", "sublabel": "使用处匹配 &var", "width": 128 },
+    { "id": "hit", "lane": "result", "col": 5, "type": "security", "label": "判误报", "sublabel": "打判定 tag", "width": 110 },
+    { "id": "keep", "lane": "keep", "col": 5, "type": "backend", "label": "保守保留", "sublabel": "均未命中·不误杀", "width": 120 }
+  ],
+  "edges": [
+    { "from": "p", "to": "s1" },
+    { "from": "s1", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s1", "to": "s2" },
+    { "from": "s2", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s2", "to": "s3" },
+    { "from": "s3", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s3", "to": "s4" },
+    { "from": "s4", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s4", "to": "keep", "label": "都未命中", "variant": "security" }
+  ]
+}

@@ -1,0 +1,155 @@
+<svg viewBox="0 0 928 652" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+        <title id="archify-diagram-title">132S · 不能在逻辑表达式中使用赋值</title>
+        <desc id="archify-diagram-description">由 Archify 生成的工作流图。</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Swimlanes -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="872" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / 解析</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="176" width="872" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="198" class="t-dim" font-size="10" font-weight="600">02 / 消费方式判定</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="300" width="872" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="322" class="t-dim" font-size="10" font-weight="600">03 / 判误报</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="424" width="872" height="104" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="446" class="t-dim" font-size="10" font-weight="600">04 / 布尔使用</text>
+
+        <!-- Phase headers -->
+        <line x1="72" y1="35" x2="284" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="72" y="27" width="212" height="16" rx="4" class="c-mask"/>
+        <text x="178" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">定位表达式</text>
+        <line x1="377.5" y1="35" x2="660" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="377.5" y="27" width="282.5" height="16" rx="4" class="c-mask"/>
+        <text x="518.75" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">沿父链判定赋值消费方式</text>
+
+        <!-- Workflow groups -->
+
+
+        <!-- Edge paths -->
+        <path data-edge-from="all_value" data-edge-to="hit" data-edge-label="全部取值" data-edge-key="0" data-composition-points="607,269;607,367;666.5,367" d="M 607 269 L 607 367 L 666.5 367" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="all_value" data-edge-to="keep" data-edge-label="有布尔使用" data-edge-key="1" data-composition-points="524,243;508,243;508,544;734,544;734,517" d="M 524 243 L 508 243 L 508 544 L 734 544 L 734 517" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="p" data-edge-to="s1" data-edge-key="2" data-composition-points="188,119;238,119;238,217" d="M 188 119 L 238 119 L 238 217" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="s1" data-edge-to="s2" data-edge-key="3" data-composition-points="323,243;351,243" d="M 323 243 L 351 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="s2" data-edge-to="all_value" data-edge-key="4" data-composition-points="496,243;524,243" d="M 496 243 L 524 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+
+        <!-- Nodes -->
+        <g id="node-p" data-node-id="p" data-node-label="132S 问题" tabindex="0" role="button" aria-label="聚焦132S 问题，逻辑表达式中使用赋值, 解析 › 定位表达式" aria-pressed="false" data-node-kind="external" data-node-sublabel="逻辑表达式中使用赋值" data-node-context="解析 › 定位表达式">
+          <title>132S 问题 · 逻辑表达式中使用赋值 · 解析 › 定位表达式</title>
+          <rect x="48" y="93" width="140" height="52" rx="6" class="c-mask"/>
+          <rect x="48" y="93" width="140" height="52" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(54 99) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="118" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">132S 问题</text>
+          <text data-detail="context" x="118" y="131" class="t-muted" font-size="8" text-anchor="middle">逻辑表达式中使用赋值</text>
+        </g>
+
+        <g id="node-s1" data-node-id="s1" data-node-label="定位逻辑表达式" tabindex="0" role="button" aria-label="聚焦定位逻辑表达式，if/while/for/do 条件或独立比较式, 消费方式判定 › 定位表达式" aria-pressed="false" data-node-kind="backend" data-node-sublabel="if/while/for/do 条件或独立比较式" data-node-context="消费方式判定 › 定位表达式">
+          <title>定位逻辑表达式 · if/while/for/do 条件或独立比较式 · 消费方式判定 › 定位表达式</title>
+          <rect x="153" y="217" width="170" height="52" rx="6" class="c-mask"/>
+          <rect x="153" y="217" width="170" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(159 223) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="238" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">定位逻辑表达式</text>
+          <text data-detail="context" x="238" y="255" class="t-muted" font-size="8" text-anchor="middle">if/while/for/do 条件或独立比较式</text>
+        </g>
+
+        <g id="node-s2" data-node-id="s2" data-node-label="收集赋值节点" tabindex="0" role="button" aria-label="聚焦收集赋值节点，沿父链看消费节点, 消费方式判定 › 沿父链判定赋值消费方式" aria-pressed="false" data-node-kind="backend" data-node-sublabel="沿父链看消费节点" data-node-context="消费方式判定 › 沿父链判定赋值消费方式">
+          <title>收集赋值节点 · 沿父链看消费节点 · 消费方式判定 › 沿父链判定赋值消费方式</title>
+          <rect x="351" y="217" width="145" height="52" rx="6" class="c-mask"/>
+          <rect x="351" y="217" width="145" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(357 223) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="423.5" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">收集赋值节点</text>
+          <text data-detail="context" x="423.5" y="255" class="t-muted" font-size="8" text-anchor="middle">沿父链看消费节点</text>
+        </g>
+
+        <g id="node-all_value" data-node-id="all_value" data-node-label="赋值以“取值”被消费" tabindex="0" role="button" aria-label="聚焦赋值以“取值”被消费，比较运算 → 取值；&amp;&amp; || ! 三元 → 布尔, 消费方式判定 › 沿父链判定赋值消费方式" aria-pressed="false" data-node-kind="backend" data-node-sublabel="比较运算 → 取值；&amp;&amp; || ! 三元 → 布尔" data-node-context="消费方式判定 › 沿父链判定赋值消费方式">
+          <title>赋值以“取值”被消费 · 比较运算 → 取值；&amp;&amp; || ! 三元 → 布尔 · 消费方式判定 › 沿父链判定赋值消费方式</title>
+          <rect x="524" y="217" width="180" height="52" rx="6" class="c-mask"/>
+          <rect x="524" y="217" width="180" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(530 223) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="614" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">赋值以“取值”被消费</text>
+          <text data-detail="context" x="614" y="255" class="t-muted" font-size="7.9" text-anchor="middle">比较运算 → 取值；&amp;&amp; || ! 三元 → 布尔</text>
+        </g>
+
+        <g id="node-hit" data-node-id="hit" data-node-label="判误报" tabindex="0" role="button" aria-label="聚焦判误报，所有赋值均取值使用, 判误报" aria-pressed="false" data-node-kind="security" data-node-sublabel="所有赋值均取值使用" data-node-context="判误报">
+          <title>判误报 · 所有赋值均取值使用 · 判误报</title>
+          <rect x="666.5" y="341" width="135" height="52" rx="6" class="c-mask"/>
+          <rect x="666.5" y="341" width="135" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(672.5 347) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="734" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">判误报</text>
+          <text data-detail="context" x="734" y="379" class="t-muted" font-size="8" text-anchor="middle">所有赋值均取值使用</text>
+        </g>
+
+        <g id="node-keep" data-node-id="keep" data-node-label="不判误报" tabindex="0" role="button" aria-label="聚焦不判误报，存在裸布尔使用, 布尔使用" aria-pressed="false" data-node-kind="backend" data-node-sublabel="存在裸布尔使用" data-node-context="布尔使用">
+          <title>不判误报 · 存在裸布尔使用 · 布尔使用</title>
+          <rect x="674" y="465" width="120" height="52" rx="6" class="c-mask"/>
+          <rect x="674" y="465" width="120" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(680 471) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="734" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">不判误报</text>
+          <text data-detail="context" x="734" y="503" class="t-muted" font-size="8" text-anchor="middle">存在裸布尔使用</text>
+        </g>
+
+        <!-- Edge labels -->
+        <g data-detail="context" data-edge-from="all_value" data-edge-to="hit" data-edge-label="全部取值" data-edge-key="0">
+          <rect x="612.55" y="347" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="636.75" y="357" class="t-backend" font-size="8" text-anchor="middle">全部取值</text>
+        </g>
+        <g data-detail="context" data-edge-from="all_value" data-edge-to="keep" data-edge-label="有布尔使用" data-edge-key="1">
+          <rect x="592" y="524" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="621" y="534" class="t-security" font-size="8" text-anchor="middle">有布尔使用</text>
+        </g>
+
+
+
+
+        <!-- Legend -->
+        <g data-legend="" data-legend-bridge="">
+          <text x="20" y="552" class="t-primary" font-size="12" font-weight="650">图例</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Agent 逻辑" data-legend-x="20" data-legend-baseline="572" data-legend-width="87">
+            <rect x="20" y="564" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="42" y="572" class="t-muted" font-size="7.5" font-weight="500">Agent 逻辑</text>
+          </g>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="策略" data-legend-x="114" data-legend-baseline="572" data-legend-width="61">
+            <rect x="114" y="564" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="136" y="572" class="t-muted" font-size="7.5" font-weight="500">策略</text>
+          </g>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="外部系统" data-legend-x="182" data-legend-baseline="572" data-legend-width="78">
+            <rect x="182" y="564" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+            <text x="204" y="572" class="t-muted" font-size="7.5" font-weight="500">外部系统</text>
+          </g>
+        </g>
+      </svg>

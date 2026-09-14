@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": { "title": "47S · 数组越界检查（保守近似）", "locale": "zh-CN", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "parse", "label": "解析" },
+    { "id": "check", "label": "子算法判定" },
+    { "id": "result", "label": "判误报" },
+    { "id": "keep", "label": "保守保留" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "解析", "fromCol": 0, "toCol": 0 },
+    { "id": "judge", "label": "编译期可界内判定·命中即止", "fromCol": 1, "toCol": 3, "variant": "emphasis" }
+  ],
+  "mainPath": ["p", "s1", "s2", "hit"],
+  "nodes": [
+    { "id": "p", "lane": "parse", "col": 0, "type": "external", "label": "47S 问题", "sublabel": "数组越界", "width": 112 },
+    { "id": "s1", "lane": "check", "col": 1, "type": "backend", "label": "取长度并判下标", "sublabel": "常量界内 → 误报；变量 → 约束", "width": 160 },
+    { "id": "s2", "lane": "check", "col": 3, "type": "backend", "label": "变量下标约束", "sublabel": "get_constraint 提取边界", "width": 150 },
+    { "id": "hit", "lane": "result", "col": 3, "type": "security", "label": "判误报", "sublabel": "可证明界内", "width": 115 },
+    { "id": "keep", "lane": "keep", "col": 3, "type": "backend", "label": "保守保留", "sublabel": "越界不可判·不误杀", "width": 130 }
+  ],
+  "edges": [
+    { "from": "p", "to": "s1" },
+    { "from": "s1", "to": "hit", "label": "界内", "variant": "emphasis" },
+    { "from": "s1", "to": "s2", "label": "变量下标" },
+    { "from": "s2", "to": "hit", "label": "约束证明界内", "variant": "emphasis" },
+    { "from": "s2", "to": "keep", "label": "无法证明", "variant": "security" }
+  ]
+}

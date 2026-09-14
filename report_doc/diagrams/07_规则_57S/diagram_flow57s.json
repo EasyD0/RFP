@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": { "title": "57S · 无作用的语句", "locale": "zh-CN", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "parse", "label": "解析" },
+    { "id": "check", "label": "子算法判定" },
+    { "id": "result", "label": "判误报" },
+    { "id": "keep", "label": "保守保留" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "解析", "fromCol": 0, "toCol": 0 },
+    { "id": "judge", "label": "子算法检查·命中即止", "fromCol": 1, "toCol": 5, "variant": "emphasis" }
+  ],
+  "mainPath": ["p", "s1", "s2", "s3", "s4", "s5"],
+  "nodes": [
+    { "id": "p", "lane": "parse", "col": 0, "type": "external", "label": "57S 问题", "sublabel": "语句无作用", "width": 112 },
+    { "id": "s1", "lane": "check", "col": 1, "type": "backend", "label": "宏占位 / 置空", "sublabel": "UNUSED_PARAMETER / (void) expr", "width": 150 },
+    { "id": "s2", "lane": "check", "col": 2, "type": "backend", "label": "日志打印", "sublabel": "调用名含 log / print", "width": 128 },
+    { "id": "s3", "lane": "check", "col": 3, "type": "backend", "label": "汇编语言", "sublabel": "#pragma inline_asm / __asm", "width": 140 },
+    { "id": "s4", "lane": "check", "col": 4, "type": "backend", "label": "声明语句", "sublabel": "libclang 判 VAR_DECL", "width": 128 },
+    { "id": "s5", "lane": "check", "col": 5, "type": "backend", "label": "函数调用", "sublabel": "FUNCTION_DECL / 函数指针 / CALL_EXPR", "width": 160 },
+    { "id": "hit", "lane": "result", "col": 5, "type": "security", "label": "判误报", "sublabel": "打判定 tag", "width": 104 },
+    { "id": "keep", "lane": "keep", "col": 5, "type": "backend", "label": "保守保留", "sublabel": "均未命中·不误杀", "width": 112 }
+  ],
+  "edges": [
+    { "from": "p", "to": "s1" },
+    { "from": "s1", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s1", "to": "s2" },
+    { "from": "s2", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s2", "to": "s3" },
+    { "from": "s3", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s3", "to": "s4" },
+    { "from": "s4", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s4", "to": "s5" },
+    { "from": "s5", "to": "hit", "label": "命中", "variant": "emphasis" },
+    { "from": "s5", "to": "keep", "label": "都未命中", "variant": "security" }
+  ]
+}

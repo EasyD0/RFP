@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": { "title": "132S · 不能在逻辑表达式中使用赋值", "locale": "zh-CN", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "parse", "label": "解析" },
+    { "id": "check", "label": "消费方式判定" },
+    { "id": "result", "label": "判误报" },
+    { "id": "keep", "label": "布尔使用" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "定位表达式", "fromCol": 0, "toCol": 1 },
+    { "id": "judge", "label": "沿父链判定赋值消费方式", "fromCol": 2, "toCol": 3, "variant": "emphasis" }
+  ],
+  "mainPath": ["p", "s1", "s2", "all_value", "hit"],
+  "nodes": [
+    { "id": "p", "lane": "parse", "col": 0, "type": "external", "label": "132S 问题", "sublabel": "逻辑表达式中使用赋值", "width": 140 },
+    { "id": "s1", "lane": "check", "col": 1, "type": "backend", "label": "定位逻辑表达式", "sublabel": "if/while/for/do 条件或独立比较式", "width": 170 },
+    { "id": "s2", "lane": "check", "col": 2, "type": "backend", "label": "收集赋值节点", "sublabel": "沿父链看消费节点", "width": 145 },
+    { "id": "all_value", "lane": "check", "col": 3, "type": "backend", "label": "赋值以“取值”被消费", "sublabel": "比较运算 → 取值；&& || ! 三元 → 布尔", "width": 180 },
+    { "id": "hit", "lane": "result", "col": 4, "type": "security", "label": "判误报", "sublabel": "所有赋值均取值使用", "width": 135 },
+    { "id": "keep", "lane": "keep", "col": 4, "type": "backend", "label": "不判误报", "sublabel": "存在裸布尔使用", "width": 120 }
+  ],
+  "edges": [
+    { "from": "p", "to": "s1" },
+    { "from": "s1", "to": "s2" },
+    { "from": "s2", "to": "all_value" },
+    { "from": "all_value", "to": "hit", "variant": "emphasis", "label": "全部取值" },
+    { "from": "all_value", "to": "keep", "variant": "security", "role": "branch", "label": "有布尔使用" }
+  ]
+}

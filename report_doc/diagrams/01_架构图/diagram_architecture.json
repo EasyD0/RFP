@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "误报识别项目的检查框架",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1200, 640]
+  },
+  "components": [
+    { "id": "report", "type": "external", "label": "静态分析报告", "sublabel": "Testbed 问题", "pos": [20, 250], "size": [120, 60] },
+    { "id": "data_structure", "type": "backend", "label": "data_structure", "sublabel": "Problem 解析", "pos": [170, 250], "size": [130, 60] },
+    { "id": "runner", "type": "backend", "label": "checker/runner", "sublabel": "串行 / 多进程调度", "pos": [330, 120], "size": [130, 60] },
+    { "id": "rules", "type": "backend", "label": "checker/rules", "sublabel": "7 条规则·导入即注册", "pos": [330, 320], "size": [140, 60] },
+    { "id": "base", "type": "backend", "label": "checker/base", "sublabel": "CheckerDict 注册表·通用检查", "pos": [560, 120], "size": [150, 60] },
+    { "id": "context", "type": "backend", "label": "checker/context", "sublabel": "CodeContext·编译参数", "pos": [560, 420], "size": [140, 60] },
+    { "id": "compile_db", "type": "database", "label": "compile_commands.json", "sublabel": "编译数据库", "pos": [700, 560], "size": [150, 60] },
+    { "id": "clang_tool", "type": "backend", "label": "clang_tool", "sublabel": "libclang AST 封装", "pos": [800, 120], "size": [120, 60] },
+    { "id": "clangd_client", "type": "backend", "label": "clangd_tool", "sublabel": "LSP 客户端·长驻会话", "pos": [800, 420], "size": [130, 60] },
+    { "id": "libclang", "type": "external", "label": "libclang", "sublabel": "clang.cindex 语义", "pos": [1010, 120], "size": [120, 60] },
+    { "id": "clangd_service", "type": "external", "label": "clangd", "sublabel": "LSP 服务", "pos": [1010, 420], "size": [120, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "本项目 ReduceFalsePositives", "wraps": ["data_structure", "runner", "rules", "base", "context", "clang_tool", "clangd_client"] }
+  ],
+  "connections": [
+    { "id": "report-data", "from": "report", "to": "data_structure", "label": "解析" },
+    { "id": "data-runner", "from": "data_structure", "to": "runner", "label": "Problem 列表", "variant": "emphasis" },
+    { "id": "runner-base", "from": "runner", "to": "base", "label": "查询 CheckerDict" },
+    { "id": "runner-rules", "from": "runner", "to": "rules", "label": "do() 判定", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "id": "context-rules", "from": "context", "to": "rules", "label": "编译参数", "variant": "dashed" },
+    { "id": "context-db", "from": "context", "to": "compile_db", "label": "生成", "fromSide": "bottom", "toSide": "left" },
+    { "id": "clangd-db", "from": "clangd_service", "to": "compile_db", "label": "读取 compile_commands", "variant": "dashed" },
+    { "id": "rules-clang_tool", "from": "rules", "to": "clang_tool", "label": "AST 语义查询" },
+    { "id": "clang_tool-libclang", "from": "clang_tool", "to": "libclang", "label": "调用 libclang" },
+    { "id": "rules-clangd_client", "from": "rules", "to": "clangd_client", "label": "引用查询" },
+    { "id": "clangd_client-service", "from": "clangd_client", "to": "clangd_service", "label": "LSP references" }
+  ]
+}

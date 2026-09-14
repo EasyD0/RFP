@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "误报识别价值管道",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [1000, 560]
+  },
+  "stages": [
+    { "label": "报告输入" },
+    { "label": "解析与自动判定" },
+    { "label": "判定结果" },
+    { "label": "人工复核" }
+  ],
+  "nodes": [
+    { "id": "report", "type": "external", "label": "分析器报告", "sublabel": "Testbed 上报问题", "stage": 0, "row": 1, "tag": "输入" },
+    { "id": "parse", "type": "backend", "label": "报告解析", "sublabel": "Problem 提取", "stage": 1, "row": 0, "tag": "归一" },
+    { "id": "check", "type": "backend", "label": "规则判定", "sublabel": "7 条规则·无虚警", "stage": 1, "row": 1, "tag": "保守近似" },
+    { "id": "semantic", "type": "messagebus", "label": "语义后端", "sublabel": "libclang + clangd", "stage": 1, "row": 2, "tag": "引用 / AST" },
+    { "id": "fp", "type": "security", "label": "误报·打 tag", "sublabel": "建议式·不删除", "stage": 2, "row": 0, "tag": "无虚警" },
+    { "id": "real", "type": "backend", "label": "真实问题", "sublabel": "值得关注", "stage": 2, "row": 1, "tag": "保留" },
+    { "id": "manual", "type": "frontend", "label": "人工复核", "sublabel": "仅复核真实问题", "stage": 3, "row": 0, "tag": "范围缩小" }
+  ],
+  "flows": [
+    { "id": "report-parse", "from": "report", "to": "parse", "label": "解析", "classification": "问题条目" },
+    { "id": "parse-check", "from": "parse", "fromSide": "bottom", "to": "check", "toSide": "top", "label": "按规则归属", "labelDy": 30, "classification": "判定输入" },
+    { "id": "semantic-check", "from": "semantic", "fromSide": "top", "to": "check", "toSide": "bottom", "label": "语义查询", "variant": "dashed", "labelDy": -30, "classification": "支撑" },
+    { "id": "check-fp", "from": "check", "fromSide": "right", "to": "fp", "toSide": "left", "label": "命中误报", "variant": "emphasis", "classification": "无虚警" },
+    { "id": "check-real", "from": "check", "fromSide": "right", "to": "real", "toSide": "left", "label": "未命中·保留", "variant": "security", "route": "straight", "labelDy": 44, "classification": "保守" },
+    { "id": "real-manual", "from": "real", "fromSide": "right", "to": "manual", "toSide": "left", "label": "需人工复核", "variant": "emphasis", "classification": "价值" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "价值", "items": ["需人工复核的问题从“全部上报”缩到“仅真实问题”", "误报自动打 tag，无需逐条点开"] },
+    { "dot": "rose", "title": "无虚警与保守", "items": ["命中误报才打 tag，判了必对", "无法证明的一律保留，不误杀真实缺陷"] }
+  ]
+}

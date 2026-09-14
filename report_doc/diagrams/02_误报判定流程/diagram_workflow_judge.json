@@ -1,0 +1,42 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "单条问题的误报判定流程",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "parse", "label": "解析与调度" },
+    { "id": "sub", "label": "规则子算法" },
+    { "id": "result", "label": "判定结果" },
+    { "id": "conservative", "label": "保守策略", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "解析与聚合", "fromCol": 0, "toCol": 1 },
+    { "id": "judge", "label": "子算法判定·短路", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "outcome", "label": "结果 · 建议式", "fromCol": 4, "toCol": 4, "variant": "dashed" }
+  ],
+  "mainPath": ["problem", "gather", "do_run", "hit", "annotate"],
+  "nodes": [
+    { "id": "problem", "lane": "parse", "col": 0, "type": "external", "label": "问题条目", "sublabel": "含 code_line / 规则 / 位置", "width": 132 },
+    { "id": "gather", "lane": "parse", "col": 1, "type": "backend", "label": "聚合检查器", "sublabel": "从 CheckerDict 查询", "width": 132 },
+    { "id": "do_run", "lane": "sub", "col": 2, "type": "backend", "label": "执行子算法 do()", "sublabel": "命中即短路", "tag": "宁缺毋滥", "width": 132 },
+    { "id": "hit", "lane": "result", "col": 3, "type": "security", "label": "判定误报", "sublabel": "找到可证依据", "tag": "判了必对", "width": 132 },
+    { "id": "annotate", "lane": "result", "col": 4, "type": "messagebus", "label": "打判定 tag", "sublabel": "条目保留·不删除", "tag": "建议式", "width": 132 },
+    { "id": "keep", "lane": "conservative", "col": 3, "type": "backend", "label": "保守保留", "sublabel": "未能证明·不判", "width": 132 },
+    { "id": "manual", "lane": "conservative", "col": 4, "type": "frontend", "label": "待人工复核", "sublabel": "问题保留·不误杀", "width": 132 }
+  ],
+  "edges": [
+    { "id": "problem-gather", "from": "problem", "to": "gather", "label": "解析", "variant": "default" },
+    { "id": "gather-do", "from": "gather", "to": "do_run", "label": "do()", "variant": "emphasis" },
+    { "id": "do-hit", "from": "do_run", "to": "hit", "label": "命中误报", "variant": "emphasis" },
+    { "id": "hit-annotate", "from": "hit", "to": "annotate", "label": "追加 tag", "variant": "emphasis" },
+    { "id": "do-keep", "from": "do_run", "to": "keep", "label": "无法证明", "variant": "security", "role": "branch" },
+    { "id": "keep-manual", "from": "keep", "to": "manual", "label": "保留", "variant": "dashed", "role": "branch" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "无虚警保证", "items": ["判定为误报 ⇒ 必须确实误报", "无法证明的一律保守保留，不冒险误杀"] },
+    { "dot": "rose", "title": "建议式落地", "items": ["识别为误报的条目不删除，仅打 tag 提示", "全程可审计、可回退"] }
+  ]
+}

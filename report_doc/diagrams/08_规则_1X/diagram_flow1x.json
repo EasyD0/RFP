@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": { "title": "1X · 在整个系统中声明的类型不一致", "locale": "zh-CN", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "parse", "label": "解析" },
+    { "id": "check", "label": "子算法判定" },
+    { "id": "result", "label": "判误报" },
+    { "id": "keep", "label": "保守保留" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "解析", "fromCol": 0, "toCol": 0 },
+    { "id": "judge", "label": "子算法检查·命中即止", "fromCol": 1, "toCol": 3, "variant": "emphasis" }
+  ],
+  "mainPath": ["p", "s1", "s2", "hit"],
+  "nodes": [
+    { "id": "p", "lane": "parse", "col": 0, "type": "external", "label": "1X 问题", "sublabel": "同一符号多处声明", "width": 120 },
+    { "id": "s1", "lane": "check", "col": 1, "type": "backend", "label": "代码行不足两处", "sublabel": "len < 2", "width": 140 },
+    { "id": "s2", "lane": "check", "col": 3, "type": "backend", "label": "语义一致比较", "sublabel": "storage / linkage / canonical type", "width": 170 },
+    { "id": "hit", "lane": "result", "col": 3, "type": "security", "label": "判误报", "sublabel": "不足两处或语义一致", "width": 125 },
+    { "id": "keep", "lane": "keep", "col": 3, "type": "backend", "label": "保守保留", "sublabel": "某项声明不一致·非误报", "width": 135 }
+  ],
+  "edges": [
+    { "from": "p", "to": "s1" },
+    { "from": "s1", "to": "hit", "label": "不足两处", "variant": "emphasis" },
+    { "from": "s1", "to": "s2", "label": "有两处" },
+    { "from": "s2", "to": "hit", "label": "均一致", "variant": "emphasis" },
+    { "from": "s2", "to": "keep", "label": "某不一致", "variant": "security" }
+  ]
+}
